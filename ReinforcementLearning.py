@@ -219,7 +219,11 @@ class FrozenLake(GymEnvironment):
                            if True (default), the number of actions is limited to 100
         :return: FrozenLake object wrapping the OpenAI Gym FrozenLake-v0 object
         """
+
+        # create TimeLimit object
         gym_env = gym.make("FrozenLake-v0", is_slippery=is_slippery)
+
+        # get original FrozenLakeEnv object
         if not time_limit:
             gym_env = gym_env.env
         return FrozenLake(gym_env)
@@ -233,5 +237,96 @@ class FrozenLake(GymEnvironment):
         """
         wins = [episode.percepts[episode.n-1, 3] == 15 for episode in episodes]
         return np.array(wins).sum()
+
+
+class Agent:
+    """
+    Class implementing the RL agent
+    """
+
+    def __init__(self, env, strategy=None):
+        """
+        Creates an Agent object
+        :param env: Environment object
+        :param strategy: LearningStrategy object (optional)
+        """
+
+        # set attributes
+        self.env = env
+        self.strategy = strategy
+
+        # if strategy is given: initialize its MDP
+        if strategy is not None:
+            self.strategy.set_MDP(self.env.num_of_states(),
+                                  self.env.num_of_actions())
+
+    def step(self, action, update_function=None):
+        """
+        Lets the agent take a step (action) in the environment
+        :param action: step (action)
+        :param update_function: callback function called after the step is taken
+                                must accept a Percept object as input argument
+        :return: Percept object holding the state, action, reward, next_state
+        """
+
+        # state before step is taken
+        state = self.env.state()
+
+        # take step
+        next_state, reward, done, info = self.env.step(action)
+
+        # create Percept object
+        percept = Percept(state, action, reward, next_state, done)
+
+        # callback function
+        if update_function:
+            update_function(percept)
+        return percept
+
+
+class Percept:
+    """
+    Class implementing a percept
+    A percept holds a state, an action, a reward, and a next_state
+    """
+
+    def __init__(self, state, action, reward, next_state, done=None):
+        """
+        Creates a Percept object
+        :param state: the state in which the agent is before the action is taken
+        :param action: the action the agent takes
+        :param reward: the reward the agent receives
+        :param next_state: the next state the agent arrives at
+        :param done: flag indicating if the episode is done or not (optional)
+        """
+        self.state = state
+        self.action = action
+        self.reward = reward
+        self.next_state = next_state
+        self.done = done
+
+    def to_array(self):
+        """
+        Converts the Percept object into a numpy array
+        :return: numpy array [state, action, reward, next_state]
+        """
+        return np.array([self.state, self.action,
+                         self.reward, self.next_state])
+
+    def get_sa_indices(self):
+        """
+        Gives the state and action
+        :return: state, action
+        """
+        return self.state, self.action
+
+    def get_sas_indices(self):
+        """
+        Gives the state, action, and next_state
+        :return: state, action, next_state
+        """
+        return self.state, self.action, self.next_state
+
+
 
 
