@@ -283,11 +283,49 @@ class Agent:
             update_function(percept)
         return percept
 
+    def walk(self, policy, update_function=None):
+        """
+        Lets the agent run one episode following a given policy
+        :param policy: Policy object
+        :param update_function: callback function called after each step
+                                (see method step)
+        :return: Episode object
+        """
+
+        # initialize episode, state and done flag
+        episode = Episode()
+        state = self.env.reset()
+        done = False
+
+        # continue taking steps as long as episode is not done
+        while not done:
+            percept = self.step(policy.next_action(state), update_function)
+            done = percept.done
+            state = percept.next_state
+            episode.add(percept)
+        return episode
+
+    def run(self, policy, num_of_episodes, update_function=None):
+        """
+        Lets the agent run many episodes following a given policy
+        :param policy: Policy object
+        :param num_of_episodes: number of episodes (positive integer)
+        :param update_function: callback function called after each step
+                                (see method step)
+        :return: list of Episode objects
+        """
+        episodes = []
+        for i in range(num_of_episodes):
+            episode = self.walk(policy, update_function)
+            episodes.append(episode)
+        return episodes
+
 
 class Percept:
     """
-    Class implementing a percept
-    A percept holds a state, an action, a reward, and a next_state
+    Class implementing the RL percept
+    A percept is created when the RL agent takes an action
+    It holds the state, the action, the reward, and the next_state
     """
 
     def __init__(self, state, action, reward, next_state, done=None):
@@ -328,5 +366,110 @@ class Percept:
         return self.state, self.action, self.next_state
 
 
+class Episode:
+    """
+    Class implementing the RL episode
+    An episode is the path from the begin state to a final state
+    It consists of a list of percepts
+    """
+
+    def __init__(self):
+        """
+        Creates an Episode object
+        Initializes attribute percepts which is a n x 4 numpy array
+        and attribute n which is equal to the number of percepts
+        A new Percept object is added using method add()
+        """
+        self.percepts = np.empty((0, 4))
+        self.n = 0
+
+    def add(self, percept):
+        """
+        Adds a new Percept object to the Episode object
+        The Percept object is converted into an array using its to_array() method
+        and added as last row to self.percepts
+        :param percept: Percept object
+        """
+        self.percepts = np.vstack((self.percepts, percept.to_array()))
+        self.n += 1
+
+    def to_list(self):
+        """
+        Converts the Episode object to a list of Percept objects
+        :return: list of Percept objects
+        """
+        percept_list = []
+        for i in range(self.n):
+            percept = Percept(self.percepts[i, 0],  # state
+                              self.percepts[i, 1],  # action
+                              self.percepts[i, 2],  # reward
+                              self.percepts[i, 3],  # next_state
+                              i == (self.n-1))  # done
+            percept_list.append(percept)
+        return percept_list
+
+
+class Policy:
+    """
+    Superclass for all RL policy classes
+    """
+
+    def __init__(self, prob, env=None):
+        """
+        Creates a Policy object
+        :param prob: nstates x nactions numpy array
+                     with nstates the number of states
+                     and nactions the number of actions
+                     nstates and nactions are stored in attributes with the same name
+        :param env: Environment object (optional)
+        """
+        self.prob = prob
+        self.env = env
+        self.nstates = prob.shape[0]
+        self.nactions = prob.shape[1]
+
+    def next_action(self, state):
+        """
+        Selects the next action in a given state
+        The probabilities of selecting the possible actions are given by self.prob[state, :]
+        :param state: state
+        :return: action
+        """
+        p = self.prob[state, :]
+        action = np.random.choice(self.prob.shape[1], size=1, p=p)
+        return action.item()
+
+
+class UniformRandomPolicy(Policy):
+    """
+    Class implementing a uniform random policy
+    """
+
+    def __init__(self, *args):
+        """
+        Creates a UniformRandomPolicy object for
+        (1) a given environment or
+        (2) a given number of states and actions
+        :param args: (1) Environment object or
+                     (2) the number of states (nstates) and the number of actions (nactions)
+        """
+
+        # UniformRandomPolicy(env)
+        if len(args) == 1:
+            env = args[0]
+            nstates = env.nstates
+            nactions = env.nactions
+
+        # UniformRandomPolicy(nstates, nactions)
+        else:
+            env = None
+            nstates = args[0]
+            nactions = args[1]
+
+        # probability matrix
+        prob = np.ones((nstates, nactions)) / nactions
+
+        # call superclass constructor
+        super().__init__(prob, env)
 
 
