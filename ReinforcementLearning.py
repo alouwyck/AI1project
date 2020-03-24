@@ -257,8 +257,8 @@ class Agent:
 
         # if strategy is given: initialize its MDP
         if strategy is not None:
-            self.strategy.set_MDP(self.env.num_of_states(),
-                                  self.env.num_of_actions())
+            self.strategy.set_MDP(self.env.nstates,
+                                  self.env.nactions)
 
     def step(self, action, update_function=None):
         """
@@ -319,6 +319,43 @@ class Agent:
             episode = self.walk(policy, update_function)
             episodes.append(episode)
         return episodes
+
+    def learn(self, plot_frequency=0):
+        """
+        Lets the agent run many episodes while applying the given learning strategy.
+        The optimal policy and value functions are stored in attribute strategy
+        :param plot_frequency: the number of episodes after which the plot must be updated
+                               if plot_frequency = 0 (default), no plot is made
+        """
+
+        # if plot is asked: initialize variable update_plot
+        if plot_frequency:
+            update_plot = False
+
+        # loop through episodes
+        for i in range(1, self.strategy.num_of_episodes+1):
+
+            # initialize variables state and done
+            state = self.env.reset()
+            done = False
+
+            # loop through one episode
+            while not done:
+                percept = self.step(self.strategy.policy.next_action(state))
+                self.strategy.learn(percept, i)
+                done = percept.done
+                state = percept.next_state
+
+            # plot intermediate results if asked
+            if plot_frequency and not (i % plot_frequency):
+                self.env.plot(self.strategy.policy, self.strategy.Vs.copy(),
+                              title="episode "+str(i), update=update_plot)
+                update_plot = True
+
+        #self.strategy.policy = self.strategy.mdp.policy_improvement(self.strategy.Vs)
+        #if plot_frequency:
+        #    self.env.plot(self.strategy.policy, self.strategy.Vs.copy(),
+        #                  title="Optimal policy", update=update_plot)
 
 
 class Percept:
@@ -731,4 +768,95 @@ class GymMDP(MarkovDecisionProcess):
 
         # call constructor of superclass
         super().__init__(states, actions, Psas, Rsas, gamma, outer, inner)
+
+
+class EmpiricalMDP(MarkovDecisionProcess):
+    """
+    Class implementing an empirical Markov Decision Process built up while the agent is learning
+    Inherits from class MarkovDecisionProcess
+    """
+
+    def __init__(self, nstates, nactions, gamma=1.0, outer=100, inner=0):
+        """
+        Creates an EmpiricalMDP object
+        :param nstates: number of states (positive integer)
+        :param nactions: number of actions (positive integer)
+        :param gamma: discount factor, optional, default is 1.0
+        :param outer: number of outer iterations, optional, default is 100 (see MarkovDecisionProcess)
+        :param inner: number of inner iterations, optional, default is 0 (see MarkovDecisionProcess)
+        """
+
+        # states and actions
+        states = range(nstates)
+        actions = range(nactions)
+
+        # allocate probability and reward matrices
+        Psas = np.zeros((nstates, nactions, nstates))
+        Rsas = np.zeros((nstates, nactions, nstates))
+
+        # call superclass constructor
+        super().__init__(states, actions, Psas, Rsas, gamma, outer, inner)
+
+        # allocate frequency matrices
+        self.Nsas = np.zeros((nstates, nactions, nstates), dtype=np.int_)
+        self.Nsa = np.zeros((nstates, nactions), dtype=np.int_)
+
+    def update(self, percept):
+        """
+        Updates the MDP using data from the given percept
+        :param percept: Percept object
+        """
+        i = percept.get_sas_indices()
+        j = percept.get_sa_indices()
+        self.Nsas[i] += 1
+        self.Nsa[j] += 1
+        self.Rsas[i] += (percept.reward - self.Rsas[i]) / self.Nsas[i]
+        self.Psas[j] = self.Nsas[j] / self.Nsa[j]
+
+
+class NaiveStrategy:
+    """
+    Class implementing a naive learning strategy in which the agent runs a given
+    number of episodes following the given policy and updating the MDP
+    after which the MDP can be solved applying value iteration
+    """
+
+    def __init__(self, num_of_episodes, policy, gamma=1.0):
+        """
+        Creates a NaiveStrategy object
+        :param num_of_episodes: number of episodes (positive integer)
+        :param policy: Policy object
+        :param gamma: discount factor, optional, default is 1.0
+        """
+        self.num_of_episodes = num_of_episodes
+        self.policy = policy
+        self.gamma = gamma
+        self.mdp = None
+        self.Qsa = None
+        self.Vs = None
+
+    def set_MDP(self, nstates, nactions):
+        """
+        Initializes the empirical MDP, stored in attibute self.mdp
+        Also allocates the value functions stored in attributes self.Vs and self.Qsa
+        :param nstates: number of states (positive integer)
+        :param nactions: number of actions (positive integer)
+        """
+        self.mdp = EmpiricalMDP(nstates, nactions, self.gamma)
+        self.Qsa = np.zeros((nstates, nactions))
+        self.Vs = np.zeros((nstates, 1))
+
+    def learn(self, percept, episode_id):
+        """
+        Updates the empirical MDP
+        This method is called by the agent after each learning step he takes
+        When the last episode is finished, the MDP is solved applying value iteration
+        (see MarkovDecisionProcess)
+        :param percept: Percept object
+        :param episode_id: episode number (positive integer)
+        """
+        self.mdp.update(percept)
+        if episode_id == self.num_of_episodes:
+            self.policy, self.Vs, self.Qsa = self.mdp.value_iteration()
+
 
