@@ -348,8 +348,10 @@ class Agent:
 
             # plot intermediate results if asked
             if plot_frequency and not (i % plot_frequency):
-                self.env.plot(self.strategy.policy, self.strategy.Vs.copy(),
-                              title="episode "+str(i), update=update_plot)
+                self.env.plot(values=self.strategy.Vs.copy(),
+                              policy=self.strategy.policy,
+                              title="episode "+str(i),
+                              update=update_plot)
                 update_plot = True
 
         #self.strategy.policy = self.strategy.mdp.policy_improvement(self.strategy.Vs)
@@ -837,7 +839,7 @@ class NaiveStrategy:
 
     def set_MDP(self, nstates, nactions):
         """
-        Initializes the empirical MDP, stored in attibute self.mdp
+        Initializes the empirical MDP, stored in attribute self.mdp
         Also allocates the value functions stored in attributes self.Vs and self.Qsa
         :param nstates: number of states (positive integer)
         :param nactions: number of actions (positive integer)
@@ -849,9 +851,10 @@ class NaiveStrategy:
     def learn(self, percept, episode_id):
         """
         Updates the empirical MDP
-        This method is called by the agent after each learning step he takes
+        This method is called by the agent after each learning step
         When the last episode is finished, the MDP is solved applying value iteration
         (see MarkovDecisionProcess)
+        The result is found in attributes self.Qsa and self.Vs
         :param percept: Percept object
         :param episode_id: episode number (positive integer)
         """
@@ -859,4 +862,361 @@ class NaiveStrategy:
         if episode_id == self.num_of_episodes:
             self.policy, self.Vs, self.Qsa = self.mdp.value_iteration()
 
+
+class LearningStrategy(NaiveStrategy, ABC):
+    """
+    Abstract superclass for all classes implementing a reinforcement learning algorithm
+    Inherits from NaiveStrategy and ABC
+    """
+
+    def __init__(self, num_of_episodes, policy, decay_rate,
+                 gamma=1.0, epsilon_min=0.01, epsilon_max=1.0):
+        """
+        Creates a LearningStrategy object
+        :param num_of_episodes: number of episodes (positive integer)
+        :param policy: Policy object with initial policy
+        :param decay_rate: decay rate
+        :param gamma: discount factor, optional, default is 1.0
+        :param epsilon_min: minimum epsilon value, optional, default is 0.01
+        :param epsilon_max: maximum epsilon value, optional, default is 1.0
+        decay rate and minimum and maximum epsilon are used to determine the
+        probabilities in the epsilon-greedy policy improvement step
+        """
+        super().__init__(num_of_episodes, policy, gamma)
+        self.decay_rate = decay_rate
+        self.epsilon_min = epsilon_min
+        self.epsilon_max = epsilon_max
+        self.__epsilon = epsilon_max
+        self.__depsilon = epsilon_max - epsilon_min
+        self._monitor = None
+        self.monitor = None
+
+    def set_monitor(self, Vs=False, Qsa=False, policy=False, check=False):
+        self._monitor = dict()
+        self.monitor = dict()
+        if Vs:
+            self.monitor["Vs"] = []
+            if callable(Vs):
+                self._monitor["Vs"] = lambda strategy: Vs(strategy.Vs)
+            else:
+                self._monitor["Vs"] = lambda strategy: strategy.Vs
+        if Qsa:
+            self.monitor["Qsa"] = []
+            if callable(Qsa):
+                self._monitor["Qsa"] = lambda strategy: Qsa(strategy.Qsa)
+            else:
+                self._monitor["Qsa"] = lambda strategy: strategy.Qsa
+        if policy:
+            self.monitor["policy"] = []
+            if callable(policy):
+                self._monitor["policy"] = lambda strategy: policy(strategy.policy.prob)
+            else:
+                self._monitor["policy"] = lambda strategy: strategy.policy.prob
+        if check:
+            self.monitor["check"] = []
+            self._monitor["check"] = check
+
+    def learn(self, percept, episode_id):
+        """
+        Updates the empirical MDP and the value functions by iteratively
+        applying an evaluation and an improvement step
+        This method is called by the agent after each learning step
+        (see MarkovDecisionProcess)
+        The result is found in attributes self.Qsa and self.Vs
+        :param percept: Percept object
+        :param episode_id: episode number (positive integer)
+        """
+        self.mdp.update(percept)
+        self._evaluate(percept)
+        self._improve(percept)
+        if percept.done:
+            self._update_epsilon(episode_id)
+            self._update_monitor()
+
+    def _update_epsilon(self, episode_id):
+        """
+        Updates epsilon after each episode using the decay rate, the given epsilon range,
+        and the episode number
+        :param episode_id: episode number (positive integer)
+        """
+        self.__epsilon = self.epsilon_min + self.__depsilon * \
+                         np.exp(-self.decay_rate * episode_id)
+
+    def _update_monitor(self):
+        if self._monitor:
+            for arg, value in self._monitor.items():
+                self.monitor[arg].append(value(self))
+
+    @abstractmethod
+    def _evaluate(self, percept):
+        """
+        Evaluation step
+        :param percept: Percept object
+        """
+        pass
+
+    @abstractmethod
+    def _improve(self, percept):
+        """
+        Improvement step
+        :param percept: Percept object
+        """
+        pass
+
+    def _improve_policy(self, s):
+        """
+        Improves policy for a given state applying a epsilon-greedy method
+        :param s: state
+        """
+        prob = self.policy.prob
+        prob[s, :] = self.__epsilon / self.mdp.nactions
+        b = self.Qsa[s, :] == np.max(self.Qsa[s, :])
+        a = np.random.choice(np.where(b)[0])
+        prob[s, a] += 1 - self.__epsilon
+        self.policy = Policy(prob, self.policy.env)
+
+    def _update_Q(self, s):
+        """
+        Updates Q-values for a given state
+        :param s: state
+        """
+        self.Qsa[s, :] = np.sum(self.mdp.Psas[s, :, :] * self.mdp.Rsas[s, :, :], axis=1) + \
+                         np.squeeze(np.dot(self.mdp.Psas[s, :, :], self.Vs)) * self.gamma
+
+
+class QLearning(LearningStrategy):
+    """
+    Class implementing the Q-Learning algorithm
+    Inherits from LearningStrategy
+    """
+
+    def __init__(self, num_of_episodes, policy, learning_rate, decay_rate,
+                 gamma=1.0, epsilon_min=0.01, epsilon_max=1.0):
+        """
+        Creates a QLearning object
+        :param num_of_episodes: number of episodes (positive integer)
+        :param policy: Policy object with initial policy
+        :param learning_rate: learning rate
+        :param decay_rate: decay rate
+        :param gamma: discount factor, optional, default is 1.0
+        :param epsilon_min: minimum epsilon value, optional, default is 0.01
+        :param epsilon_max: maximum epsilon value, optional, default is 1.0
+        decay rate and minimum and maximum epsilon are used to determine the
+        probabilities in the epsilon-greedy policy improvement step
+        """
+        super().__init__(num_of_episodes, policy, decay_rate, gamma, epsilon_min, epsilon_max)
+        self.learning_rate = learning_rate
+
+    def learn(self, percept, episode_id):
+        """
+        Updates the empirical MDP and the value functions Q and V by iteratively
+        applying an evaluation and an improvement step
+        This method is called by the agent after each learning step
+        (see MarkovDecisionProcess)
+        The result is found in attributes self.Qsa and self.Vs
+        :param percept: Percept object
+        :param episode_id: episode number (positive integer)
+        """
+        super().learn(percept, episode_id)
+        self.Vs = np.max(self.Qsa, axis=1)
+
+    def _evaluate(self, percept):
+        """
+        Performs the Q-Learning evaluation step in which the action-value function Q is calculated
+        from the new percept
+        :param percept: Percept object
+        """
+        sa = percept.get_sa_indices()
+        sas = percept.get_sas_indices()
+        self.Qsa[sa] = self.Qsa[sa] + self.learning_rate * \
+                       (self.mdp.Rsas[sas] + self.gamma *
+                        np.max(self.Qsa[percept.next_state, :]) - self.Qsa[sa])
+
+    def _improve(self, percept):
+        """
+        Performs the Q-Learning improvement step in which the policy is improved every learning step
+        applying a epsilon-greedy method
+        :param percept: Percept object
+        """
+        for s in self.mdp.states:
+            self._improve_policy(s)
+
+
+class MonteCarlo(QLearning):
+    """
+    Class implementing the Monte Carlo algorithm
+    Inherits from QLearning
+    """
+
+    def __init__(self, num_of_episodes, policy, learning_rate, decay_rate,
+                 gamma=1.0, epsilon_min=0.01, epsilon_max=1.0):
+        """
+        Creates a MonteCaro object
+        :param num_of_episodes: number of episodes (positive integer)
+        :param policy: Policy object with initial policy
+        :param learning_rate: learning rate
+        :param decay_rate: decay rate
+        :param gamma: discount factor, optional, default is 1.0
+        :param epsilon_min: minimum epsilon value, optional, default is 0.01
+        :param epsilon_max: maximum epsilon value, optional, default is 1.0
+        decay rate and minimum and maximum epsilon are used to determine the
+        probabilities in the epsilon-greedy policy improvement step
+        """
+        super().__init__(num_of_episodes, policy, learning_rate, decay_rate,
+                         gamma, epsilon_min, epsilon_max)
+        self.__percepts = []
+
+    def _evaluate(self, percept):
+        """
+        Performs the Monte Carlo evaluation step in which the action-value function Q is calculated
+        from the new percepts sampled during an episode
+        :param percept: Percept object
+        """
+        self._evaluate_with_condition(percept, percept.done)
+
+    def _evaluate_with_condition(self, percept, condition):
+        """
+        Performs the evaluation step if condition is satisfied, i.e if condition is True
+        :param percept: Percept object
+        :param condition: boolean
+        """
+        self.__percepts.insert(0, percept)
+        if condition:
+            for percept in self.__percepts:
+                super()._evaluate(percept)
+
+    def _improve(self, percept):
+        """
+        Performs the Monte Carlo improvement step in which the policy is improved every episode
+        applying a epsilon-greedy method
+        :param percept: Percept object
+        """
+        self._improve_with_condition(percept, percept.done)
+
+    def _improve_with_condition(self, percept, condition):
+        """
+        Performs the improvement step if condition is satisfied, i.e if condition is True
+        :param percept: Percept object
+        :param condition: boolean
+        """
+        if condition:
+            super()._improve(percept)
+            self._reset()
+
+    def _reset(self):
+        """
+        Resets necessary variables when the improvement step is done
+        """
+        self.__percepts = []
+
+
+class NStepQLearning(MonteCarlo):
+    """
+    Class implementing the N-Step Q-Learning algorithm
+    Inherits from MonteCarlo
+    """
+
+    def __init__(self, num_of_episodes, policy, learning_rate, Nstep, decay_rate,
+                 gamma=1.0, epsilon_min=0.01, epsilon_max=1.0):
+        """
+        Creates a MonteCaro object
+        :param num_of_episodes: number of episodes (positive integer)
+        :param policy: Policy object with initial policy
+        :param learning_rate: learning rate
+        :param Nstep: step size N (positive integer)
+        :param decay_rate: decay rate
+        :param gamma: discount factor, optional, default is 1.0
+        :param epsilon_min: minimum epsilon value, optional, default is 0.01
+        :param epsilon_max: maximum epsilon value, optional, default is 1.0
+        decay rate and minimum and maximum epsilon are used to determine the
+        probabilities in the epsilon-greedy policy improvement step
+        """
+        super().__init__(num_of_episodes, policy, learning_rate, decay_rate,
+                         gamma, epsilon_min, epsilon_max)
+        self.Nstep = Nstep
+        self.__N = 0
+
+    def _evaluate(self, percept):
+        """
+        Performs the N-Step Q-Learning evaluation step in which the action-value function Q is calculated
+        from the new percepts sampled during the last N learning steps
+        :param percept: Percept object
+        """
+        self.__N += 1
+        self._evaluate_with_condition(percept, self.__N == self.Nstep)
+
+    def _improve(self, percept):
+        """
+        Performs the N-Step Q-Learning improvement step in which the policy is improved every N learning steps
+        applying a epsilon-greedy method
+        :param percept: Percept object
+        """
+        self._improve_with_condition(percept, self.__N == self.Nstep)
+        self.__percepts = []
+
+    def _reset(self):
+        """
+        Resets necessary variables when the improvement step is done
+        """
+        super()._reset()
+        self.__N = 0
+
+
+class ValueIteration(LearningStrategy):
+    """
+    Class implementing the Value Iteration algorithm
+    Inherits from LearningStrategy
+    """
+
+    def __init__(self, num_of_episodes, policy, decay_rate,
+                 precision=1e-3, maxiter=1000, gamma=1.0, epsilon_min=0.01, epsilon_max=1.0):
+        """
+        Creates a ValueIteration object
+        :param num_of_episodes: number of episodes (positive integer)
+        :param policy: Policy object with initial policy
+        :param decay_rate: decay rate
+        :param precision: criterion of convergence for the evaluation step, optional, default is 1e-3
+        :param maxiter: maximum number of iterations for the evaluation step (positive integer)
+                        optional, default is 1000
+        :param gamma: discount factor, optional, default is 1.0
+        :param epsilon_min: minimum epsilon value, optional, default is 0.01
+        :param epsilon_max: maximum epsilon value, optional, default is 1.0
+        decay rate and minimum and maximum epsilon are used to determine the
+        probabilities in the epsilon-greedy policy improvement step
+        """
+        super().__init__(num_of_episodes, policy, decay_rate, gamma, epsilon_min, epsilon_max)
+        self.precision = precision
+        self.maxiter = maxiter
+        self.__precision = precision
+        if self.gamma < 1:
+            self.__precision *= 1/self.gamma - 1
+
+    def _evaluate(self, percept):
+        """
+        Performs the Value Iteration evaluation step in which the state-value function V is calculated
+        from the new percept
+        :param percept: Percept object
+        """
+        precision = self.__precision * np.max(self.mdp.Rsas)
+        delta = np.Inf
+        i = 0
+        while delta > precision and i < self.maxiter:
+            i += 1
+            delta = 0.0
+            for s in self.mdp.states:
+                u = self.Vs[s]
+                self.Vs[s] = np.max(self.policy.prob[s, :] *
+                                    (np.sum(self.mdp.Psas[s, :, :] * self.mdp.Rsas[s, :, :], axis=1) +
+                                     np.squeeze(np.dot(self.mdp.Psas[s, :, :], self.Vs)) * self.gamma))
+                delta = max(delta, abs(self.Vs[s]-u))
+
+    def _improve(self, percept):
+        """
+        Performs the Value Iteration improvement step in which the policy is improved every learning step
+        applying a epsilon-greedy method
+        :param percept: Percept object
+        """
+        for s in self.mdp.states:
+            self._update_Q(s)
+            self._improve_policy(s)
 
