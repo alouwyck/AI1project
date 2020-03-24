@@ -443,6 +443,7 @@ class Policy:
 class UniformRandomPolicy(Policy):
     """
     Class implementing a uniform random policy
+    Inherits from class Policy
     """
 
     def __init__(self, *args):
@@ -472,4 +473,262 @@ class UniformRandomPolicy(Policy):
         # call superclass constructor
         super().__init__(prob, env)
 
+
+class MarkovDecisionProcess:
+    """
+    Class implementing the Markov Decision Process (MDP)
+    Provides the dynamic programming algorithms policy evaluation, policy iteration
+    and value iteration to solve the MDP
+    """
+
+    def __init__(self, states, actions, Psas, Rsas, gamma=1.0, outer=100, inner=0):
+        """
+        Creates a MarkovDecisionProcess object
+        :param states: list or array with the states
+                       the number of states nstates = len(states)
+        :param actions: list or array with the actions
+                        the number of actions nactions = len(actions)
+        :param Psas: state transition matrix
+                     numpy array with nstates x nactions x nstates probabilities
+        :param Rsas: reward matrix
+                     numpy array with nstates x nactions x nstates rewards
+        :param gamma: discount factor, default is 1.0
+        :param outer: default number of outer iterations, optional, default is 100
+                      used in policy iteration and value iteration
+        :param inner: default number of inner iterations, optional, default is 0
+                      used in policy evaluation
+                      if inner = 0, the system of equations is solved directly
+        All input arguments are assigned to attributes with the same name
+        The same is true for nstates and nactions
+        """
+        self.states = states
+        self.nstates = len(self.states)
+        self.actions = actions
+        self.nactions = len(self.actions)
+        self.Psas = Psas
+        self.Rsas = Rsas
+        self.gamma = gamma
+        self.outer = outer
+        self.inner = inner
+
+    def policy_evaluation(self, policy, inner=None):
+        """
+        Evaluates a given policy by calculating the state-value and action-value
+        functions of the MDP corresponding to the policy
+        :param policy: Policy object
+        :param inner: number of iterations, default is given by self.inner
+                      if inner = 0, the system of Bellman expectation equations
+                      is solved applying the direct solver numpy.linalg.solve
+                      if inner > 0, an iterative dynamic programming algorithm
+                      is applied
+        :return: Vs, Qsa
+                 Vs is the state-value function, a numpy array with nstates values
+                 Qsa is the action value function an nstates x nactions numpy array
+        """
+
+        # if inner is not given, set to self.inner
+        if inner is None:
+            inner = self.inner
+
+        # get the reduced MRP probability and reward matrices
+        Pss, Rs = self.__reduce_matrices(policy)
+
+        # direct solver
+        if inner < 1:
+            I = np.identity(self.nstates)
+            Vs = np.linalg.solve(I - self.gamma * Pss, Rs)
+
+        # iterative solver (dynamic programming)
+        else:
+            Vs = np.zeros((self.nstates, 1))
+            for i in range(inner):
+                Vs = Rs + np.dot(self.gamma * Pss, Vs)
+
+        # Qsa
+        Qsa = np.zeros((self.nstates, self.nactions))
+        for s in range(self.nstates):
+            Qsa[s, :] = np.sum(self.Psas[s, :, :] * self.Rsas[s, :, :], axis=1) + \
+                        np.squeeze(np.dot(self.Psas[s, :, :], Vs)) * self.gamma
+
+        # output
+        return Vs, Qsa
+
+    def __reduce_matrices(self, policy):
+        """
+        Reduces MDP to MRP by squeezing Psas and Rsas
+        :param policy: Policy object
+        :return: Pss, Rs
+                 Pss is the reduced nstates x nstates probability matrix
+                 Rs is the reduced reward vector of length nstates
+        """
+        Pss = np.zeros((self.nstates, self.nstates))
+        Rss = np.zeros((self.nstates, self.nstates))
+        for s in range(self.nstates):
+            Pss[s, :] = np.dot(policy.prob[s, :], self.Psas[s, :, :])
+            Rss[s, :] = np.dot(policy.prob[s, :], self.Psas[s, :, :]*self.Rsas[s, :, :])
+        Rs = np.sum(Rss, 1, keepdims=True)
+        return Pss, Rs
+
+    def policy_improvement(self, Vs):
+        """
+        Finds the policy corresponding to the given state-value function
+        The method assigns a 100% probability to the action with the largest action-value
+        If there is more than one action with maximum value
+        the method gives equal probability to all of these actions with maximum value
+        instead of selecting one randomly
+        :param Vs: state-value function, numpy vector with nstates state-values
+        :return: Policy object
+        """
+        Qsa = np.zeros((self.nstates, self.nactions))
+        prob = np.zeros((self.nstates, self.nactions))
+        for s in range(self.nstates):
+            Qsa[s, :] = np.sum(self.Psas[s, :, :]*self.Rsas[s, :, :], axis=1) + \
+                        np.squeeze(np.dot(self.Psas[s, :, :], Vs)) * self.gamma
+            b = Qsa[s, :] == np.max(Qsa[s, :])
+            prob[s, b] = 1.0 / np.sum(b)
+        return Policy(prob)
+
+    def policy_iteration(self, inner=None, outer=None):
+        """
+        Finds the MDP's optimal policy and value functions applying policy iteration
+        which iteratively performs policy evaluation calling method policy_evaluation()
+        and policy improvement calling method policy_improvement()
+        :param inner: number of inner iterations, default is given by attribute self.inner
+                      this parameter determines how the policy evaluation matrix system is solved:
+                      if inner = 0 it is solved directly
+                      if inner > 0 it is solved iteratively
+                      see method policy.evaluation()
+        :param outer: number of outer iterations, default is given by attribute self.outer
+                      this parameter determines how many successive evaluation and improvement
+                      steps are performed
+        :return: policy, Vs, Qsa
+                 policy is a Policy object with the optimal policy
+                 Vs is a numpy vector with the nstates optimal state-values
+                 Qsa is a numpy matrix with the nstates x nactions optimal action-values
+        """
+
+        # input inner and outer given?
+        if inner is None:
+            inner = self.inner
+        if outer is None:
+            outer = self.outer
+
+        # start with uniform random policy
+        policy = UniformRandomPolicy(self.nstates, self.nactions)
+
+        # successively perform policy evaluation and improvement
+        for i in range(outer):
+            Vs, Qsa = self.policy_evaluation(policy, inner=inner)
+            policy = self.policy_improvement(Vs)
+
+        # finally do a last evaluation step
+        Vs, Qsa = self.policy_evaluation(policy, inner=inner)
+
+        # output
+        return policy, Vs, Qsa
+
+    def value_iteration(self, inner=None, outer=None):
+        """
+        Finds the MDP's optimal policy and value functions applying value iteration
+        The algorithm doesn't evaluate and improve the policy explicitely
+        but it calls methods policy_improvement() and policy_evaluation() after the iterative process
+        :param inner: number of inner iterations, default is given by attribute self.inner
+                      this parameter determines how the final policy evaluation step is performed:
+                      if inner = 0 matrix system is solved directly
+                      if inner > 0 matrix system is solved iteratively
+                      see method policy.evaluation()
+        :param outer: number of outer iterations, default is given by attribute self.outer
+                      this parameter determines the number of iterations of the value iteration algorithm
+        :return: policy, Vs, Qsa
+                 policy is a Policy object with the optimal policy
+                 Vs is a numpy vector with the nstates optimal state-values
+                 Qsa is a numpy matrix with the nstates x nactions optimal action-values
+        """
+
+        # input inner and outer given?
+        if inner is None:
+            inner = self.inner
+        if outer is None:
+            outer = self.outer
+
+        # start with Vs = 0
+        Vs = np.zeros((self.nstates, 1))
+
+        # states
+        states = range(self.nstates)
+
+        # iterations
+        for i in range(outer):
+            for s in states:
+                Vs[s] = np.max(
+                               np.sum(self.Psas[s, :, :] * self.Rsas[s, :, :], axis=1) + \
+                               np.squeeze(np.dot(self.Psas[s, :, :], Vs)) * self.gamma
+                               )
+
+        # finally do a last improvement and evaluation step
+        policy = self.policy_improvement(Vs)
+        Vs, Qsa = self.policy_evaluation(policy, inner=inner)
+
+        # output
+        return policy, Vs, Qsa
+
+
+class GymMDP(MarkovDecisionProcess):
+    """
+    Class implementing the MDP of an OpenAI Gym environment
+    Inherits from MarkovDecisionProcess
+    """
+
+    def __init__(self, env, gamma=1.0, outer=100, inner=0):
+        """
+        Creates a GymMDP object
+        Derives MDP attributes states, actions, Psas and Rsas
+        from the given OpenAI Gym environment
+        :param env: GymEnvironment object
+        :param gamma: discount factor, optional, default is 1.0
+        :param outer: number of outer iterations, optional, default is 100
+        :param inner: number of inner iterations, optional, default is 0
+        """
+
+        # input: gym environment
+        self.env = env
+
+        # states and actions
+        nstates = env.nstates
+        states = range(nstates)
+        nactions = env.nactions
+        actions = range(nactions)
+
+        # probabilities and rewards from the gym environment
+        envP = env.gym_env.P
+
+        # function to check if state is terminal
+        def is_terminal(state):
+            Pstate = envP[state]
+            is_end = True
+            action = 0
+            while is_end and action < nactions:
+                is_end = len(Pstate[action]) == 1
+                if is_end:
+                    is_end = (Pstate[action][0][1] == state) & Pstate[action][0][3]
+                action += 1
+            return is_end
+
+        # allocate Psas and Rsas
+        Psas = np.zeros((nstates, nactions, nstates))
+        Rsas = np.zeros((nstates, nactions, nstates))
+
+        # loop through all states and actions to define Psas and Rsas
+        for state in states:  # number of states
+            if not is_terminal(state):  # no terminal state
+                for action in actions:  # number of actions
+                    for to_state in range(len(envP[state][action])):  # number of next states
+                        p = envP[state][action][to_state][0]  # probability
+                        to = envP[state][action][to_state][1]  # next state
+                        r = envP[state][action][to_state][2]  # reward
+                        Psas[state, action, to] += p
+                        Rsas[state, action, to] += r
+
+        # call constructor of superclass
+        super().__init__(states, actions, Psas, Rsas, gamma, outer, inner)
 
