@@ -88,6 +88,14 @@ class GymEnvironment(Environment):
         state = self.gym_env.reset()
         return state
 
+    def seed(self, seed):
+        """
+        Sets the OpenAI Gym environment random seed
+        Calls self.gym_env.seed()
+        :param seed: integer
+        """
+        self.gym_env.seed(seed)
+
     @staticmethod
     def make(environment_name):
         """
@@ -359,6 +367,95 @@ class Agent:
         #    self.env.plot(self.strategy.policy, self.strategy.Vs.copy(),
         #                  title="Optimal policy", update=update_plot)
 
+    def value_iteration(self, num_of_episodes, gamma=1.0,
+                        decay_rate=0.01, eps_min=0.01, eps_max=1.0,
+                        precision=1e-3, maxiter=100, seed=None):
+
+        if seed is not None:
+            np.random.seed(seed)
+
+        mdp = EmpiricalMDP(self.env.nstates, self.env.nactions, gamma)
+        policy = UniformRandomPolicy(self.env)
+        states = range(self.env.nstates)
+        actions = range(self.env.nactions)
+        nsa = self.env.nstates * self.env.nactions
+        v = np.zeros(self.env.nstates)
+        q = np.zeros((self.env.nstates, self.env.nactions))
+        epsilon = eps_max
+        if gamma < 1.0:
+            epsilon *= (1-gamma)/gamma
+
+        # loop through episodes
+        for i in range(1, num_of_episodes + 1):
+
+            # initialize variables state and done
+            state = self.env.reset()
+            done = False
+
+            # loop through one episode
+            while not done:
+
+                # step
+                percept = self.step(policy.next_action(state))
+                done = percept.done
+                state = percept.next_state
+                mdp.update(percept)
+
+                # prepare matrices
+                prob = np.reshape(policy.prob, (nsa, ), order="c")
+                PR = np.reshape(np.sum(mdp.Psas * mdp.Rsas, axis=2),
+                                (nsa, ), order="c")
+                gPsa = mdp.gamma * np.reshape(mdp.Psas,
+                                              (nsa, self.env.nstates),
+                                              order="c")
+
+                # evaluate
+                rmax = np.max(mdp.Rsas)
+                delta = np.Inf
+                j = 0
+                while (delta > (precision*rmax)) and (j < maxiter):
+
+                    delta = 0.0
+                    j += 1
+
+                    u = v.copy()
+                    v = np.max(
+                               np.reshape(prob * (PR + np.dot(gPsa, v)),
+                                          (self.env.nstates, self.env.nactions),
+                                          order="c"),
+                               axis=1)
+                    delta = max(delta, np.max(np.abs(u-v)))
+
+                    # for s in states:
+                    #     u = v[s]
+                    #     v[s] = np.max(policy.prob[s, :] *
+                    #                   (np.sum(mdp.Psas[s, :, :] * mdp.Rsas[s, :, :], axis=1) +
+                    #                    np.squeeze(np.dot(mdp.Psas[s, :, :], v)) * gamma))
+                    #     delta = max(delta, abs(u-v[s]))
+
+                # improve
+
+                q = np.reshape(PR + np.dot(gPsa, v),
+                               (self.env.nstates, self.env.nactions),
+                               order="c")
+                policy.prob[:, :] = epsilon / self.env.nactions
+                is_max = q == np.max(q, axis=1).reshape((self.env.nstates, 1))
+                for s in states:
+                    a = np.random.choice(np.where(is_max[s, :])[0])
+                    policy.prob[s, a] += 1 - epsilon
+
+                # for s in states:
+                #     q[s, :] = np.sum(mdp.Psas[s, :, :] * mdp.Rsas[s, :, :], axis=1) + \
+                #               np.squeeze(np.dot(mdp.Psas[s, :, :], v)) * gamma
+                #     a = np.random.choice(np.where(q[s, :] == np.max(q[s, :]))[0])
+                #     policy.prob[s, :] = epsilon / self.env.nactions
+                #     policy.prob[s, a] += 1 - epsilon
+
+            # epsilon
+            epsilon = eps_min + (eps_max - eps_min) * np.exp(-decay_rate * i)
+
+        return v, q, policy, mdp
+
 
 class Percept:
     """
@@ -477,6 +574,28 @@ class Policy:
         p = self.prob[state, :]
         action = np.random.choice(self.prob.shape[1], size=1, p=p)
         return action.item()
+
+    def improve(self, Qsa, epsilon):
+        """
+        Improves the policy using the given action-value function Q
+        by applying the epsilon-greedy method
+        :param Qsa: action-values Q, nstates x nactions numpy array
+        :param epsilon: epsilon probability
+        """
+        self.prob[:, :] = epsilon / self.nactions
+        is_max = Qsa == np.max(Qsa, axis=1).reshape((self.nstates, 1))
+        for s in range(self.nstates):
+            a = np.random.choice(np.where(is_max[s, :])[0])
+            self.prob[s, a] += 1 - epsilon
+
+    @staticmethod
+    def seed(seed):
+        """
+        Sets the policy's random seed
+        Calls numpy.random.seed()
+        :param seed: integer
+        """
+        np.random.seed(seed)
 
 
 class UniformRandomPolicy(Policy):
@@ -846,7 +965,7 @@ class NaiveStrategy:
         """
         self.mdp = EmpiricalMDP(nstates, nactions, self.gamma)
         self.Qsa = np.zeros((nstates, nactions))
-        self.Vs = np.zeros((nstates, 1))
+        self.Vs = np.zeros(nstates)
 
     def learn(self, percept, episode_id):
         """
@@ -955,33 +1074,12 @@ class LearningStrategy(NaiveStrategy, ABC):
         """
         pass
 
-    @abstractmethod
     def _improve(self, percept):
         """
         Improvement step
         :param percept: Percept object
         """
-        pass
-
-    def _improve_policy(self, s):
-        """
-        Improves policy for a given state applying a epsilon-greedy method
-        :param s: state
-        """
-        prob = self.policy.prob
-        prob[s, :] = self.__epsilon / self.mdp.nactions
-        b = self.Qsa[s, :] == np.max(self.Qsa[s, :])
-        a = np.random.choice(np.where(b)[0])
-        prob[s, a] += 1 - self.__epsilon
-        self.policy = Policy(prob, self.policy.env)
-
-    def _update_Q(self, s):
-        """
-        Updates Q-values for a given state
-        :param s: state
-        """
-        self.Qsa[s, :] = np.sum(self.mdp.Psas[s, :, :] * self.mdp.Rsas[s, :, :], axis=1) + \
-                         np.squeeze(np.dot(self.mdp.Psas[s, :, :], self.Vs)) * self.gamma
+        self.policy.improve(self.Qsa, self.__epsilon)
 
 
 class QLearning(LearningStrategy):
@@ -1018,7 +1116,8 @@ class QLearning(LearningStrategy):
         :param episode_id: episode number (positive integer)
         """
         super().learn(percept, episode_id)
-        self.Vs = np.max(self.Qsa, axis=1)
+        #self.Vs = np.max(self.Qsa, axis=1)
+        self.Vs[percept.state] = np.max(self.Qsa[percept.state, :])
 
     def _evaluate(self, percept):
         """
@@ -1038,8 +1137,9 @@ class QLearning(LearningStrategy):
         applying a epsilon-greedy method
         :param percept: Percept object
         """
-        for s in self.mdp.states:
-            self._improve_policy(s)
+        #for s in range(self.mdp.nstates):
+        #    self._improve_policy(s)
+        self._improve_policy(percept.state)
 
 
 class MonteCarlo(QLearning):
@@ -1197,26 +1297,32 @@ class ValueIteration(LearningStrategy):
         from the new percept
         :param percept: Percept object
         """
+
+        # prepare matrices
+        shp = (self.mdp.nstates, self.mdp.nactions)
+        nsa = self.mdp.nstates * self.mdp.nactions
+        prob = np.reshape(self.policy.prob, (nsa,), order="c")
+        PR = np.reshape(np.sum(self.mdp.Psas * self.mdp.Rsas, axis=2),
+                        (nsa,), order="c")
+        gPsa = self.gamma * np.reshape(self.mdp.Psas,
+                                       (nsa, self.mdp.nstates),
+                                       order="c")
+
+        # calculate Vs iteratively
         precision = self.__precision * np.max(self.mdp.Rsas)
         delta = np.Inf
         i = 0
-        while delta > precision and i < self.maxiter:
+        while (delta > precision) and (i < self.maxiter):
             i += 1
             delta = 0.0
-            for s in self.mdp.states:
-                u = self.Vs[s]
-                self.Vs[s] = np.max(self.policy.prob[s, :] *
-                                    (np.sum(self.mdp.Psas[s, :, :] * self.mdp.Rsas[s, :, :], axis=1) +
-                                     np.squeeze(np.dot(self.mdp.Psas[s, :, :], self.Vs)) * self.gamma))
-                delta = max(delta, abs(self.Vs[s]-u))
+            u = self.Vs.copy()
+            self.Vs = np.max(
+                             np.reshape(prob * (PR + np.dot(gPsa, self.Vs)),
+                                        shp, order="c"),
+                             axis=1)
+            delta = max(delta, np.max(np.abs(u - self.Vs)))
 
-    def _improve(self, percept):
-        """
-        Performs the Value Iteration improvement step in which the policy is improved every learning step
-        applying a epsilon-greedy method
-        :param percept: Percept object
-        """
-        for s in self.mdp.states:
-            self._update_Q(s)
-            self._improve_policy(s)
+        # update Qsa
+        self.Qsa = np.reshape(PR + np.dot(gPsa, self.Vs), shp, order="c")
+
 
