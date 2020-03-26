@@ -698,15 +698,21 @@ class MarkovDecisionProcess:
 
         # iterative solver (dynamic programming)
         else:
-            Vs = np.zeros((self.nstates, 1))
+            Vs = np.zeros(self.nstates)
             for i in range(inner):
                 Vs = Rs + np.dot(self.gamma * Pss, Vs)
 
         # Qsa
-        Qsa = np.zeros((self.nstates, self.nactions))
-        for s in range(self.nstates):
-            Qsa[s, :] = np.sum(self.Psas[s, :, :] * self.Rsas[s, :, :], axis=1) + \
-                        np.squeeze(np.dot(self.Psas[s, :, :], Vs)) * self.gamma
+        nsa = self.nstates * self.nactions
+        PR = np.reshape(np.sum(self.Psas * self.Rsas, axis=2),
+                        (nsa,), order="c")
+        gPsa = self.gamma * np.reshape(self.Psas, (nsa, self.nstates), order="c")
+        Qsa = np.reshape(PR + np.dot(gPsa, Vs), (self.nstates, self.nactions), order="c")
+
+        # Qsa = np.zeros((self.nstates, self.nactions))
+        # for s in range(self.nstates):
+        #     Qsa[s, :] = np.sum(self.Psas[s, :, :] * self.Rsas[s, :, :], axis=1) + \
+        #                 np.squeeze(np.dot(self.Psas[s, :, :], Vs)) * self.gamma
 
         # output
         return Vs, Qsa
@@ -724,7 +730,7 @@ class MarkovDecisionProcess:
         for s in range(self.nstates):
             Pss[s, :] = np.dot(policy.prob[s, :], self.Psas[s, :, :])
             Rss[s, :] = np.dot(policy.prob[s, :], self.Psas[s, :, :]*self.Rsas[s, :, :])
-        Rs = np.sum(Rss, 1, keepdims=True)
+        Rs = np.sum(Rss, axis=1)
         return Pss, Rs
 
     def policy_improvement(self, Vs):
