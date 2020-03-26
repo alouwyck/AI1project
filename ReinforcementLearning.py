@@ -743,13 +743,26 @@ class MarkovDecisionProcess:
         :param Vs: state-value function, numpy vector with nstates state-values
         :return: Policy object
         """
-        Qsa = np.zeros((self.nstates, self.nactions))
+
+        # prepare matrices
+        shp = (self.nstates, self.nactions)
+        nsa = self.nstates * self.nactions
+        PR = np.reshape(np.sum(self.Psas * self.Rsas, axis=2), (nsa,), order="c")
+        gPsa = self.gamma * np.reshape(self.Psas, (nsa, self.nstates), order="c")
+
+        # update Qsa
+        Qsa = np.reshape(PR + np.dot(gPsa, Vs), shp, order="c")
+
+        # find policy
+        #Qsa = np.zeros((self.nstates, self.nactions))
         prob = np.zeros((self.nstates, self.nactions))
         for s in range(self.nstates):
-            Qsa[s, :] = np.sum(self.Psas[s, :, :]*self.Rsas[s, :, :], axis=1) + \
-                        np.squeeze(np.dot(self.Psas[s, :, :], Vs)) * self.gamma
+            #Qsa[s, :] = np.sum(self.Psas[s, :, :]*self.Rsas[s, :, :], axis=1) + \
+            #            np.squeeze(np.dot(self.Psas[s, :, :], Vs)) * self.gamma
             b = Qsa[s, :] == np.max(Qsa[s, :])
             prob[s, b] = 1.0 / np.sum(b)
+
+        # return Policy object with policy matrix
         return Policy(prob)
 
     def policy_iteration(self, inner=None, outer=None):
@@ -791,16 +804,11 @@ class MarkovDecisionProcess:
         # output
         return policy, Vs, Qsa
 
-    def value_iteration(self, inner=None, outer=None):
+    def value_iteration(self, outer=None):  # inner=None,
         """
         Finds the MDP's optimal policy and value functions applying value iteration
         The algorithm doesn't evaluate and improve the policy explicitely
         but it calls methods policy_improvement() and policy_evaluation() after the iterative process
-        :param inner: number of inner iterations, default is given by attribute self.inner
-                      this parameter determines how the final policy evaluation step is performed:
-                      if inner = 0 matrix system is solved directly
-                      if inner > 0 matrix system is solved iteratively
-                      see method policy.evaluation()
         :param outer: number of outer iterations, default is given by attribute self.outer
                       this parameter determines the number of iterations of the value iteration algorithm
         :return: policy, Vs, Qsa
@@ -809,32 +817,60 @@ class MarkovDecisionProcess:
                  Qsa is a numpy matrix with the nstates x nactions optimal action-values
         """
 
-        # input inner and outer given?
-        if inner is None:
-            inner = self.inner
+        # outer not given
         if outer is None:
             outer = self.outer
 
-        # start with Vs = 0
-        Vs = np.zeros((self.nstates, 1))
+        # prepare matrices
+        nsa = self.nstates * self.nactions
+        shape = (self.nstates, self.nactions)
+        PR = np.reshape(np.sum(self.Psas * self.Rsas, axis=2), (nsa,), order="c")
+        gPsa = self.gamma * np.reshape(self.Psas, (nsa, self.nstates), order="c")
+        Vs = np.zeros(self.nstates)
 
-        # states
-        states = range(self.nstates)
-
-        # iterations
+        # calculate Qsa and Vs
         for i in range(outer):
-            for s in states:
-                Vs[s] = np.max(
-                               np.sum(self.Psas[s, :, :] * self.Rsas[s, :, :], axis=1) + \
-                               np.squeeze(np.dot(self.Psas[s, :, :], Vs)) * self.gamma
-                               )
+            Qsa = np.reshape(PR + np.dot(gPsa, Vs), shape, order="c")
+            Vs = np.max(Qsa, axis=1)
 
-        # finally do a last improvement and evaluation step
+        # get optimal policy
         policy = self.policy_improvement(Vs)
-        Vs, Qsa = self.policy_evaluation(policy, inner=inner)
 
         # output
         return policy, Vs, Qsa
+
+        # :param inner: number of inner iterations, default is given by attribute self.inner
+        #               this parameter determines how the final policy evaluation step is performed:
+        #               if inner = 0 matrix system is solved directly
+        #               if inner > 0 matrix system is solved iteratively
+        #               see method policy.evaluation()
+        #
+        # # input inner and outer given?
+        # if inner is None:
+        #     inner = self.inner
+        # if outer is None:
+        #     outer = self.outer
+        #
+        # # start with Vs = 0
+        # Vs = np.zeros((self.nstates, 1))
+        #
+        # # states
+        # states = range(self.nstates)
+        #
+        # # iterations
+        # for i in range(outer):
+        #     for s in states:
+        #         Vs[s] = np.max(
+        #                        np.sum(self.Psas[s, :, :] * self.Rsas[s, :, :], axis=1) + \
+        #                        np.squeeze(np.dot(self.Psas[s, :, :], Vs)) * self.gamma
+        #                        )
+        #
+        # # finally do a last improvement and evaluation step
+        # policy = self.policy_improvement(Vs)
+        # Vs, Qsa = self.policy_evaluation(policy, inner=inner)
+        #
+        # # output
+        # return policy, Vs, Qsa
 
 
 class GymMDP(MarkovDecisionProcess):
