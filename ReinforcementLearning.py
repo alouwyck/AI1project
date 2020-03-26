@@ -1049,6 +1049,7 @@ class LearningStrategy(NaiveStrategy, ABC):
         self.epsilon_max = epsilon_max
         self.__epsilon = epsilon_max
         self.__depsilon = epsilon_max - epsilon_min
+        self._condition = True
         self._monitor = None
         self.monitor = None
 
@@ -1088,8 +1089,9 @@ class LearningStrategy(NaiveStrategy, ABC):
         :param episode_id: episode number (positive integer)
         """
         self.mdp.update(percept)
-        self._evaluate(percept)
-        self._improve(percept)
+        if self._condition:
+            self._evaluate(percept)
+            self._improve()
         if percept.done:
             self._update_epsilon(episode_id)
             self._update_monitor()
@@ -1116,11 +1118,11 @@ class LearningStrategy(NaiveStrategy, ABC):
         """
         pass
 
-    def _improve(self, percept):
+    def _improve(self):
         """
         Improvement step
-        :param percept: Percept object
         """
+        # :param percept: Percept object
         self.policy.improve(self.Qsa, self.__epsilon)
 
 
@@ -1147,19 +1149,18 @@ class QLearning(LearningStrategy):
         super().__init__(num_of_episodes, policy, decay_rate, gamma, epsilon_min, epsilon_max)
         self.learning_rate = learning_rate
 
-    def learn(self, percept, episode_id):
-        """
-        Updates the empirical MDP and the value functions Q and V by iteratively
-        applying an evaluation and an improvement step
-        This method is called by the agent after each learning step
-        (see MarkovDecisionProcess)
-        The result is found in attributes self.Qsa and self.Vs
-        :param percept: Percept object
-        :param episode_id: episode number (positive integer)
-        """
-        super().learn(percept, episode_id)
-        #self.Vs = np.max(self.Qsa, axis=1)
-        self.Vs[percept.state] = np.max(self.Qsa[percept.state, :])
+    # def learn(self, percept, episode_id):
+    #     """
+    #     Updates the empirical MDP and the value functions Q and V by iteratively
+    #     applying an evaluation and an improvement step
+    #     This method is called by the agent after each learning step
+    #     (see MarkovDecisionProcess)
+    #     The result is found in attributes self.Qsa and self.Vs
+    #     :param percept: Percept object
+    #     :param episode_id: episode number (positive integer)
+    #     """
+    #     super().learn(percept, episode_id)
+    #     self.Vs[percept.state] = np.max(self.Qsa[percept.state, :])
 
     def _evaluate(self, percept):
         """
@@ -1169,19 +1170,20 @@ class QLearning(LearningStrategy):
         """
         sa = percept.get_sa_indices()
         sas = percept.get_sas_indices()
-        self.Qsa[sa] = self.Qsa[sa] + self.learning_rate * \
-                       (self.mdp.Rsas[sas] + self.gamma *
-                        np.max(self.Qsa[percept.next_state, :]) - self.Qsa[sa])
+        self.Qsa[sa] = (1 - self.learning_rate) * self.Qsa[sa] + \
+                       self.learning_rate * \
+                       (self.mdp.Rsas[sas] + self.gamma * np.max(self.Qsa[sas[2], :]))
+        self.Vs[sa[0]] = np.max(self.Qsa[sa[0], :])
 
-    def _improve(self, percept):
-        """
-        Performs the Q-Learning improvement step in which the policy is improved every learning step
-        applying a epsilon-greedy method
-        :param percept: Percept object
-        """
-        #for s in range(self.mdp.nstates):
-        #    self._improve_policy(s)
-        self._improve_policy(percept.state)
+    # def _improve(self, percept):
+    #     """
+    #     Performs the Q-Learning improvement step in which the policy is improved every learning step
+    #     applying a epsilon-greedy method
+    #     :param percept: Percept object
+    #     """
+    #     #for s in range(self.mdp.nstates):
+    #     #    self._improve_policy(s)
+    #     self._improve_policy(percept.state)
 
 
 class MonteCarlo(QLearning):
@@ -1206,7 +1208,16 @@ class MonteCarlo(QLearning):
         """
         super().__init__(num_of_episodes, policy, learning_rate, decay_rate,
                          gamma, epsilon_min, epsilon_max)
-        self.__percepts = []
+        self._percepts = []
+
+    def _initialize(self, percept):
+        self._percepts.insert(0, percept)
+        self._condition = percept.done
+
+    def learn(self, percept, episode_id):
+        self._initialize(percept)
+        super().learn(percept, episode_id)
+        self._reset()
 
     def _evaluate(self, percept):
         """
@@ -1214,42 +1225,14 @@ class MonteCarlo(QLearning):
         from the new percepts sampled during an episode
         :param percept: Percept object
         """
-        self._evaluate_with_condition(percept, percept.done)
-
-    def _evaluate_with_condition(self, percept, condition):
-        """
-        Performs the evaluation step if condition is satisfied, i.e if condition is True
-        :param percept: Percept object
-        :param condition: boolean
-        """
-        self.__percepts.insert(0, percept)
-        if condition:
-            for percept in self.__percepts:
-                super()._evaluate(percept)
-
-    def _improve(self, percept):
-        """
-        Performs the Monte Carlo improvement step in which the policy is improved every episode
-        applying a epsilon-greedy method
-        :param percept: Percept object
-        """
-        self._improve_with_condition(percept, percept.done)
-
-    def _improve_with_condition(self, percept, condition):
-        """
-        Performs the improvement step if condition is satisfied, i.e if condition is True
-        :param percept: Percept object
-        :param condition: boolean
-        """
-        if condition:
-            super()._improve(percept)
-            self._reset()
+        for percept in self._percepts:
+            super()._evaluate(percept)
 
     def _reset(self):
         """
-        Resets necessary variables when the improvement step is done
         """
-        self.__percepts = []
+        if self._condition:
+            self._percepts = []
 
 
 class NStepQLearning(MonteCarlo):
@@ -1276,32 +1259,19 @@ class NStepQLearning(MonteCarlo):
         super().__init__(num_of_episodes, policy, learning_rate, decay_rate,
                          gamma, epsilon_min, epsilon_max)
         self.Nstep = Nstep
-        self.__N = 0
+        self._N = 0
 
-    def _evaluate(self, percept):
-        """
-        Performs the N-Step Q-Learning evaluation step in which the action-value function Q is calculated
-        from the new percepts sampled during the last N learning steps
-        :param percept: Percept object
-        """
-        self.__N += 1
-        self._evaluate_with_condition(percept, self.__N == self.Nstep)
-
-    def _improve(self, percept):
-        """
-        Performs the N-Step Q-Learning improvement step in which the policy is improved every N learning steps
-        applying a epsilon-greedy method
-        :param percept: Percept object
-        """
-        self._improve_with_condition(percept, self.__N == self.Nstep)
-        self.__percepts = []
+    def _initialize(self, percept):
+        self._percepts.insert(0, percept)
+        self._N += 1
+        self._condition = self._N == self.Nstep
 
     def _reset(self):
         """
-        Resets necessary variables when the improvement step is done
         """
-        super()._reset()
-        self.__N = 0
+        if self._condition:
+            self._percepts = []
+            self._N = 0
 
 
 class ValueIteration(LearningStrategy):
@@ -1341,11 +1311,10 @@ class ValueIteration(LearningStrategy):
         """
 
         # prepare matrices
-        shp = (self.mdp.nstates, self.mdp.nactions)
+        shape = (self.mdp.nstates, self.mdp.nactions)
         nsa = self.mdp.nstates * self.mdp.nactions
         prob = np.reshape(self.policy.prob, (nsa,), order="c")
-        PR = np.reshape(np.sum(self.mdp.Psas * self.mdp.Rsas, axis=2),
-                        (nsa,), order="c")
+        PR = np.reshape(np.sum(self.mdp.Psas * self.mdp.Rsas, axis=2), (nsa,), order="c")
         gPsa = self.gamma * np.reshape(self.mdp.Psas,
                                        (nsa, self.mdp.nstates),
                                        order="c")
@@ -1360,11 +1329,10 @@ class ValueIteration(LearningStrategy):
             u = self.Vs.copy()
             self.Vs = np.max(
                              np.reshape(prob * (PR + np.dot(gPsa, self.Vs)),
-                                        shp, order="c"),
+                                        shape, order="c"),
                              axis=1)
             delta = max(delta, np.max(np.abs(u - self.Vs)))
 
         # update Qsa
-        self.Qsa = np.reshape(PR + np.dot(gPsa, self.Vs), shp, order="c")
-
+        self.Qsa = np.reshape(PR + np.dot(gPsa, self.Vs), shape, order="c")
 
