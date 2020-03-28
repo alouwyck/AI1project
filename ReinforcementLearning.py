@@ -377,7 +377,6 @@ class Agent:
         mdp = EmpiricalMDP(self.env.nstates, self.env.nactions, gamma)
         policy = UniformRandomPolicy(self.env)
         states = range(self.env.nstates)
-        actions = range(self.env.nactions)
         nsa = self.env.nstates * self.env.nactions
         v = np.zeros(self.env.nstates)
         q = np.zeros((self.env.nstates, self.env.nactions))
@@ -438,6 +437,65 @@ class Agent:
                 q = np.reshape(PR + np.dot(gPsa, v),
                                (self.env.nstates, self.env.nactions),
                                order="c")
+                policy.prob[:, :] = epsilon / self.env.nactions
+                is_max = q == np.max(q, axis=1).reshape((self.env.nstates, 1))
+                for s in states:
+                    a = np.random.choice(np.where(is_max[s, :])[0])
+                    policy.prob[s, a] += 1 - epsilon
+
+                # for s in states:
+                #     q[s, :] = np.sum(mdp.Psas[s, :, :] * mdp.Rsas[s, :, :], axis=1) + \
+                #               np.squeeze(np.dot(mdp.Psas[s, :, :], v)) * gamma
+                #     a = np.random.choice(np.where(q[s, :] == np.max(q[s, :]))[0])
+                #     policy.prob[s, :] = epsilon / self.env.nactions
+                #     policy.prob[s, a] += 1 - epsilon
+
+            # epsilon
+            epsilon = eps_min + (eps_max - eps_min) * np.exp(-decay_rate * i)
+
+        return v, q, policy, mdp
+
+    def qlearning(self, num_of_episodes, learning_rate, gamma=1.0,
+                        decay_rate=0.01, eps_min=0.01, eps_max=1.0,
+                        seed=None):
+
+        if seed is not None:
+            np.random.seed(seed)
+
+        mdp = EmpiricalMDP(self.env.nstates, self.env.nactions, gamma)
+        policy = UniformRandomPolicy(self.env)
+        states = range(self.env.nstates)
+        v = np.zeros(self.env.nstates)
+        q = np.zeros((self.env.nstates, self.env.nactions))
+        epsilon = eps_max
+        if gamma < 1.0:
+            epsilon *= (1-gamma)/gamma
+
+        # loop through episodes
+        for i in range(1, num_of_episodes + 1):
+
+            # initialize variables state and done
+            state = self.env.reset()
+            done = False
+
+            # loop through one episode
+            while not done:
+
+                # step
+                percept = self.step(policy.next_action(state))
+                done = percept.done
+                state = percept.next_state
+                mdp.update(percept)
+
+                # evaluate
+                s = percept.state
+                a = percept.action
+                n = percept.next_state
+                q[s, a] = (1 - learning_rate) * q[s, a] + \
+                          learning_rate * (percept.reward + gamma * np.max(q[n, :]))
+                v[s] = np.max(q[s, :])
+
+                # improve
                 policy.prob[:, :] = epsilon / self.env.nactions
                 is_max = q == np.max(q, axis=1).reshape((self.env.nstates, 1))
                 for s in states:
@@ -1148,6 +1206,7 @@ class QLearning(LearningStrategy):
         """
         super().__init__(num_of_episodes, policy, decay_rate, gamma, epsilon_min, epsilon_max)
         self.learning_rate = learning_rate
+        self._1_alpha = 1 - learning_rate
 
     # def learn(self, percept, episode_id):
     #     """
@@ -1169,10 +1228,8 @@ class QLearning(LearningStrategy):
         :param percept: Percept object
         """
         sa = percept.get_sa_indices()
-        sas = percept.get_sas_indices()
-        self.Qsa[sa] = (1 - self.learning_rate) * self.Qsa[sa] + \
-                       self.learning_rate * \
-                       (self.mdp.Rsas[sas] + self.gamma * np.max(self.Qsa[sas[2], :]))
+        self.Qsa[sa] = self._1_alpha * self.Qsa[sa] + self.learning_rate * \
+                       (percept.reward + self.gamma * np.max(self.Qsa[percept.next_state, :]))
         self.Vs[sa[0]] = np.max(self.Qsa[sa[0], :])
 
     # def _improve(self, percept):
