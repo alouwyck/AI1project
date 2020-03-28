@@ -1129,21 +1129,21 @@ class LearningStrategy(NaiveStrategy, ABC):
         if Vs:
             self.monitor["Vs"] = []
             if callable(Vs):
-                self._monitor["Vs"] = lambda strategy: Vs(strategy.Vs)
+                self._monitor["Vs"] = lambda strategy: Vs(strategy.Vs.copy())
             else:
-                self._monitor["Vs"] = lambda strategy: strategy.Vs
+                self._monitor["Vs"] = lambda strategy: strategy.Vs.copy()
         if Qsa:
             self.monitor["Qsa"] = []
             if callable(Qsa):
-                self._monitor["Qsa"] = lambda strategy: Qsa(strategy.Qsa)
+                self._monitor["Qsa"] = lambda strategy: Qsa(strategy.Qsa.copy())
             else:
-                self._monitor["Qsa"] = lambda strategy: strategy.Qsa
+                self._monitor["Qsa"] = lambda strategy: strategy.Qsa.copy()
         if policy:
             self.monitor["policy"] = []
             if callable(policy):
-                self._monitor["policy"] = lambda strategy: policy(strategy.policy.prob)
+                self._monitor["policy"] = lambda strategy: policy(strategy.policy.prob.copy())
             else:
-                self._monitor["policy"] = lambda strategy: strategy.policy.prob
+                self._monitor["policy"] = lambda strategy: strategy.policy.prob.copy()
         if check:
             self.monitor["check"] = []
             self._monitor["check"] = check
@@ -1177,8 +1177,8 @@ class LearningStrategy(NaiveStrategy, ABC):
 
     def _update_monitor(self):
         if self._monitor:
-            for arg, value in self._monitor.items():
-                self.monitor[arg].append(value(self))
+            for arg, fnc in self._monitor.items():
+                self.monitor[arg].append(fnc(self))
 
     @abstractmethod
     def _evaluate(self, percept):
@@ -1368,9 +1368,10 @@ class ValueIteration(LearningStrategy):
         super().__init__(num_of_episodes, policy, decay_rate, gamma, epsilon_min, epsilon_max)
         self.precision = precision
         self.maxiter = maxiter
-        self.__precision = precision
+        self._precision = precision
+        self._iter = 0
         if self.gamma < 1:
-            self.__precision *= 1/self.gamma - 1
+            self._precision *= 1/self.gamma - 1
 
     def _evaluate(self, percept):
         """
@@ -1389,11 +1390,11 @@ class ValueIteration(LearningStrategy):
                                        order="c")
 
         # calculate Vs iteratively
-        precision = self.__precision * np.max(self.mdp.Rsas)
+        precision = self._precision * np.max(self.mdp.Rsas)
         delta = np.Inf
-        i = 0
+        self._iter = 0
         while (delta > precision) and (i < self.maxiter):
-            i += 1
+            self._iter += 1
             delta = 0.0
             u = self.Vs.copy()
             self.Vs = np.max(
