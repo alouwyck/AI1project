@@ -412,6 +412,16 @@ class Agent:
                 rmax = np.max(mdp.Rsas)
                 delta = np.Inf
                 j = 0
+
+                ##########################################
+                if i == num_of_episodes and percept.done:
+                    precision = -1.0
+                    maxiter = 5000
+                    v = np.zeros(self.env.nstates)
+                    print(np.hstack((prob[:, np.newaxis], (PR + np.dot(gPsa, v))[:, np.newaxis])))
+                ###########################################
+
+
                 while (delta > (precision*rmax)) and (j < maxiter):
 
                     delta = 0.0
@@ -419,7 +429,7 @@ class Agent:
 
                     u = v.copy()
                     v = np.max(
-                               np.reshape(prob * (PR + np.dot(gPsa, v)),
+                               np.reshape((PR + np.dot(gPsa, v)),  # prob *
                                           (self.env.nstates, self.env.nactions),
                                           order="c"),
                                axis=1)
@@ -433,7 +443,6 @@ class Agent:
                     #     delta = max(delta, abs(u-v[s]))
 
                 # improve
-
                 q = np.reshape(PR + np.dot(gPsa, v),
                                (self.env.nstates, self.env.nactions),
                                order="c")
@@ -862,7 +871,7 @@ class MarkovDecisionProcess:
         # output
         return policy, Vs, Qsa
 
-    def value_iteration(self, outer=None):  # inner=None,
+    def value_iteration(self, outer=None, iniVs=None):  # inner=None,
         """
         Finds the MDP's optimal policy and value functions applying value iteration
         The algorithm doesn't evaluate and improve the policy explicitely
@@ -884,7 +893,10 @@ class MarkovDecisionProcess:
         shape = (self.nstates, self.nactions)
         PR = np.reshape(np.sum(self.Psas * self.Rsas, axis=2), (nsa,), order="c")
         gPsa = self.gamma * np.reshape(self.Psas, (nsa, self.nstates), order="c")
-        Vs = np.zeros(self.nstates)
+        if iniVs is None:
+            Vs = np.zeros(self.nstates)
+        else:
+            Vs = iniVs.copy()
 
         # calculate Qsa and Vs
         for i in range(outer):
