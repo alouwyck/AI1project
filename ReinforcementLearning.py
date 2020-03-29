@@ -1393,7 +1393,7 @@ class ValueIteration(LearningStrategy):
         precision = self._precision * np.max(self.mdp.Rsas)
         delta = np.Inf
         self._iter = 0
-        while (delta > precision) and (i < self.maxiter):
+        while (delta > precision) and (self._iter < self.maxiter):
             self._iter += 1
             delta = 0.0
             u = self.Vs.copy()
