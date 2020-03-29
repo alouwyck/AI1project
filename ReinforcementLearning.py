@@ -367,162 +367,6 @@ class Agent:
         #    self.env.plot(self.strategy.policy, self.strategy.Vs.copy(),
         #                  title="Optimal policy", update=update_plot)
 
-    def value_iteration(self, num_of_episodes, gamma=1.0,
-                        decay_rate=0.01, eps_min=0.01, eps_max=1.0,
-                        precision=1e-3, maxiter=100, seed=None):
-
-        if seed is not None:
-            np.random.seed(seed)
-
-        mdp = EmpiricalMDP(self.env.nstates, self.env.nactions, gamma)
-        policy = UniformRandomPolicy(self.env)
-        states = range(self.env.nstates)
-        nsa = self.env.nstates * self.env.nactions
-        v = np.zeros(self.env.nstates)
-        q = np.zeros((self.env.nstates, self.env.nactions))
-        epsilon = eps_max
-        if gamma < 1.0:
-            epsilon *= (1-gamma)/gamma
-
-        # loop through episodes
-        for i in range(1, num_of_episodes + 1):
-
-            # initialize variables state and done
-            state = self.env.reset()
-            done = False
-
-            # loop through one episode
-            while not done:
-
-                # step
-                percept = self.step(policy.next_action(state))
-                done = percept.done
-                state = percept.next_state
-                mdp.update(percept)
-
-                # prepare matrices
-                prob = np.reshape(policy.prob, (nsa, ), order="c")
-                PR = np.reshape(np.sum(mdp.Psas * mdp.Rsas, axis=2),
-                                (nsa, ), order="c")
-                gPsa = mdp.gamma * np.reshape(mdp.Psas,
-                                              (nsa, self.env.nstates),
-                                              order="c")
-
-                # evaluate
-                rmax = np.max(mdp.Rsas)
-                delta = np.Inf
-                j = 0
-
-                ##########################################
-                if i == num_of_episodes and percept.done:
-                    precision = -1.0
-                    maxiter = 5000
-                    v = np.zeros(self.env.nstates)
-                    print(np.hstack((prob[:, np.newaxis], (PR + np.dot(gPsa, v))[:, np.newaxis])))
-                ###########################################
-
-
-                while (delta > (precision*rmax)) and (j < maxiter):
-
-                    delta = 0.0
-                    j += 1
-
-                    u = v.copy()
-                    v = np.max(
-                               np.reshape((PR + np.dot(gPsa, v)),  # prob *
-                                          (self.env.nstates, self.env.nactions),
-                                          order="c"),
-                               axis=1)
-                    delta = max(delta, np.max(np.abs(u-v)))
-
-                    # for s in states:
-                    #     u = v[s]
-                    #     v[s] = np.max(policy.prob[s, :] *
-                    #                   (np.sum(mdp.Psas[s, :, :] * mdp.Rsas[s, :, :], axis=1) +
-                    #                    np.squeeze(np.dot(mdp.Psas[s, :, :], v)) * gamma))
-                    #     delta = max(delta, abs(u-v[s]))
-
-                # improve
-                q = np.reshape(PR + np.dot(gPsa, v),
-                               (self.env.nstates, self.env.nactions),
-                               order="c")
-                policy.prob[:, :] = epsilon / self.env.nactions
-                is_max = q == np.max(q, axis=1).reshape((self.env.nstates, 1))
-                for s in states:
-                    a = np.random.choice(np.where(is_max[s, :])[0])
-                    policy.prob[s, a] += 1 - epsilon
-
-                # for s in states:
-                #     q[s, :] = np.sum(mdp.Psas[s, :, :] * mdp.Rsas[s, :, :], axis=1) + \
-                #               np.squeeze(np.dot(mdp.Psas[s, :, :], v)) * gamma
-                #     a = np.random.choice(np.where(q[s, :] == np.max(q[s, :]))[0])
-                #     policy.prob[s, :] = epsilon / self.env.nactions
-                #     policy.prob[s, a] += 1 - epsilon
-
-            # epsilon
-            epsilon = eps_min + (eps_max - eps_min) * np.exp(-decay_rate * i)
-
-        return v, q, policy, mdp
-
-    def qlearning(self, num_of_episodes, learning_rate, gamma=1.0,
-                        decay_rate=0.01, eps_min=0.01, eps_max=1.0,
-                        seed=None):
-
-        if seed is not None:
-            np.random.seed(seed)
-
-        mdp = EmpiricalMDP(self.env.nstates, self.env.nactions, gamma)
-        policy = UniformRandomPolicy(self.env)
-        states = range(self.env.nstates)
-        v = np.zeros(self.env.nstates)
-        q = np.zeros((self.env.nstates, self.env.nactions))
-        epsilon = eps_max
-        if gamma < 1.0:
-            epsilon *= (1-gamma)/gamma
-
-        # loop through episodes
-        for i in range(1, num_of_episodes + 1):
-
-            # initialize variables state and done
-            state = self.env.reset()
-            done = False
-
-            # loop through one episode
-            while not done:
-
-                # step
-                percept = self.step(policy.next_action(state))
-                done = percept.done
-                state = percept.next_state
-                mdp.update(percept)
-
-                # evaluate
-                s = percept.state
-                a = percept.action
-                n = percept.next_state
-                q[s, a] = (1 - learning_rate) * q[s, a] + \
-                          learning_rate * (percept.reward + gamma * np.max(q[n, :]))
-                v[s] = np.max(q[s, :])
-
-                # improve
-                policy.prob[:, :] = epsilon / self.env.nactions
-                is_max = q == np.max(q, axis=1).reshape((self.env.nstates, 1))
-                for s in states:
-                    a = np.random.choice(np.where(is_max[s, :])[0])
-                    policy.prob[s, a] += 1 - epsilon
-
-                # for s in states:
-                #     q[s, :] = np.sum(mdp.Psas[s, :, :] * mdp.Rsas[s, :, :], axis=1) + \
-                #               np.squeeze(np.dot(mdp.Psas[s, :, :], v)) * gamma
-                #     a = np.random.choice(np.where(q[s, :] == np.max(q[s, :]))[0])
-                #     policy.prob[s, :] = epsilon / self.env.nactions
-                #     policy.prob[s, a] += 1 - epsilon
-
-            # epsilon
-            epsilon = eps_min + (eps_max - eps_min) * np.exp(-decay_rate * i)
-
-        return v, q, policy, mdp
-
 
 class Percept:
     """
@@ -741,11 +585,11 @@ class MarkovDecisionProcess:
         Evaluates a given policy by calculating the state-value and action-value
         functions of the MDP corresponding to the policy
         :param policy: Policy object
-        :param inner: number of iterations, default is given by self.inner
+        :param inner: number of iterations (positive integer)
+                      optional, default is given by self.inner
                       if inner = 0, the system of Bellman expectation equations
                       is solved applying the direct solver numpy.linalg.solve
-                      if inner > 0, an iterative dynamic programming algorithm
-                      is applied
+                      if inner > 0, an iterative dynamic programming algorithm is applied
         :return: Vs, Qsa
                  Vs is the state-value function, a numpy array with nstates values
                  Qsa is the action value function an nstates x nactions numpy array
@@ -775,11 +619,6 @@ class MarkovDecisionProcess:
                         (nsa,), order="c")
         gPsa = self.gamma * np.reshape(self.Psas, (nsa, self.nstates), order="c")
         Qsa = np.reshape(PR + np.dot(gPsa, Vs), (self.nstates, self.nactions), order="c")
-
-        # Qsa = np.zeros((self.nstates, self.nactions))
-        # for s in range(self.nstates):
-        #     Qsa[s, :] = np.sum(self.Psas[s, :, :] * self.Rsas[s, :, :], axis=1) + \
-        #                 np.squeeze(np.dot(self.Psas[s, :, :], Vs)) * self.gamma
 
         # output
         return Vs, Qsa
@@ -821,11 +660,8 @@ class MarkovDecisionProcess:
         Qsa = np.reshape(PR + np.dot(gPsa, Vs), shp, order="c")
 
         # find policy
-        #Qsa = np.zeros((self.nstates, self.nactions))
         prob = np.zeros((self.nstates, self.nactions))
         for s in range(self.nstates):
-            #Qsa[s, :] = np.sum(self.Psas[s, :, :]*self.Rsas[s, :, :], axis=1) + \
-            #            np.squeeze(np.dot(self.Psas[s, :, :], Vs)) * self.gamma
             b = Qsa[s, :] == np.max(Qsa[s, :])
             prob[s, b] = 1.0 / np.sum(b)
 
@@ -837,12 +673,14 @@ class MarkovDecisionProcess:
         Finds the MDP's optimal policy and value functions applying policy iteration
         which iteratively performs policy evaluation calling method policy_evaluation()
         and policy improvement calling method policy_improvement()
-        :param inner: number of inner iterations, default is given by attribute self.inner
+        :param inner: number of inner iterations (positive integer)
+                      optional, default is given by attribute self.inner
                       this parameter determines how the policy evaluation matrix system is solved:
                       if inner = 0 it is solved directly
                       if inner > 0 it is solved iteratively
                       see method policy.evaluation()
-        :param outer: number of outer iterations, default is given by attribute self.outer
+        :param outer: number of outer iterations (positive integer)
+                      optional, default is given by attribute self.outer
                       this parameter determines how many successive evaluation and improvement
                       steps are performed
         :return: policy, Vs, Qsa
@@ -871,12 +709,13 @@ class MarkovDecisionProcess:
         # output
         return policy, Vs, Qsa
 
-    def value_iteration(self, outer=None, iniVs=None):  # inner=None,
+    def value_iteration(self, outer=None):
         """
         Finds the MDP's optimal policy and value functions applying value iteration
         The algorithm doesn't evaluate and improve the policy explicitely
         but it calls methods policy_improvement() and policy_evaluation() after the iterative process
-        :param outer: number of outer iterations, default is given by attribute self.outer
+        :param outer: number of outer iterations (positive integer)
+                      optional, default is given by attribute self.outer
                       this parameter determines the number of iterations of the value iteration algorithm
         :return: policy, Vs, Qsa
                  policy is a Policy object with the optimal policy
@@ -893,10 +732,7 @@ class MarkovDecisionProcess:
         shape = (self.nstates, self.nactions)
         PR = np.reshape(np.sum(self.Psas * self.Rsas, axis=2), (nsa,), order="c")
         gPsa = self.gamma * np.reshape(self.Psas, (nsa, self.nstates), order="c")
-        if iniVs is None:
-            Vs = np.zeros(self.nstates)
-        else:
-            Vs = iniVs.copy()
+        Vs = np.zeros(self.nstates)
 
         # calculate Qsa and Vs
         for i in range(outer):
@@ -908,39 +744,6 @@ class MarkovDecisionProcess:
 
         # output
         return policy, Vs, Qsa
-
-        # :param inner: number of inner iterations, default is given by attribute self.inner
-        #               this parameter determines how the final policy evaluation step is performed:
-        #               if inner = 0 matrix system is solved directly
-        #               if inner > 0 matrix system is solved iteratively
-        #               see method policy.evaluation()
-        #
-        # # input inner and outer given?
-        # if inner is None:
-        #     inner = self.inner
-        # if outer is None:
-        #     outer = self.outer
-        #
-        # # start with Vs = 0
-        # Vs = np.zeros((self.nstates, 1))
-        #
-        # # states
-        # states = range(self.nstates)
-        #
-        # # iterations
-        # for i in range(outer):
-        #     for s in states:
-        #         Vs[s] = np.max(
-        #                        np.sum(self.Psas[s, :, :] * self.Rsas[s, :, :], axis=1) + \
-        #                        np.squeeze(np.dot(self.Psas[s, :, :], Vs)) * self.gamma
-        #                        )
-        #
-        # # finally do a last improvement and evaluation step
-        # policy = self.policy_improvement(Vs)
-        # Vs, Qsa = self.policy_evaluation(policy, inner=inner)
-        #
-        # # output
-        # return policy, Vs, Qsa
 
 
 class GymMDP(MarkovDecisionProcess):
@@ -1057,6 +860,8 @@ class NaiveStrategy:
     def __init__(self, num_of_episodes, policy, gamma=1.0):
         """
         Creates a NaiveStrategy object
+        Input arguments are stored in attributes with the same name
+        Other attributes are self.mpd, self.Vs, and self.Qsa (see method set_MDP)
         :param num_of_episodes: number of episodes (positive integer)
         :param policy: Policy object
         :param gamma: discount factor, optional, default is 1.0
@@ -1085,7 +890,7 @@ class NaiveStrategy:
         This method is called by the agent after each learning step
         When the last episode is finished, the MDP is solved applying value iteration
         (see MarkovDecisionProcess)
-        The result is found in attributes self.Qsa and self.Vs
+        The result is found in attributes self.Vs and self.Qsa
         :param percept: Percept object
         :param episode_id: episode number (positive integer)
         """
@@ -1104,6 +909,8 @@ class LearningStrategy(NaiveStrategy, ABC):
                  gamma=1.0, epsilon_min=0.01, epsilon_max=1.0):
         """
         Creates a LearningStrategy object
+        Input arguments are stored in attributes with the same name
+        Also an attribute self.monitor is defined (see method set_monitor)
         :param num_of_episodes: number of episodes (positive integer)
         :param policy: Policy object with initial policy
         :param decay_rate: decay rate
@@ -1113,17 +920,45 @@ class LearningStrategy(NaiveStrategy, ABC):
         decay rate and minimum and maximum epsilon are used to determine the
         probabilities in the epsilon-greedy policy improvement step
         """
+
+        # call superclass constructor
         super().__init__(num_of_episodes, policy, gamma)
+
+        # additional attributes
         self.decay_rate = decay_rate
         self.epsilon_min = epsilon_min
         self.epsilon_max = epsilon_max
-        self.__epsilon = epsilon_max
-        self.__depsilon = epsilon_max - epsilon_min
-        self._condition = True
-        self._monitor = None
         self.monitor = None
 
+        # protected attributes
+        self._epsilon = epsilon_max  # epsilon for epsilon-greedy policy improvement
+        self._depsilon = epsilon_max - epsilon_min  # epsilon range
+        self._condition = True  # evaluate condition: only if True evaluation is done
+        self._monitor = None  # dictionary holding input from method set_monitor
+
     def set_monitor(self, Vs=False, Qsa=False, policy=False, check=False):
+        """
+        Sets monitoring, i.e. storing temporary results of the agent's learning process
+        The required variables are added to attribute self.monitor after each episode
+        Attribute self.monitor is a dictionary with corresponding keys "Vs", "Qsa", "policy", and "check",
+        each of them holding a list of the required variables
+        The input of this method is stored in protected attribute self._monitor,
+        which is also a dictionary with the same keys
+        :param Vs: optional, default is False
+                   if True, self.Vs is added to list self.monitor["Vs"] after each episode
+                   if Vs is a function fnc accepting one argument Vs, then fnc(self.Vs) is added to the list
+        :param Qsa: optional, default is False
+                    if True, self.Qsa is added to list self.monitor["Qsa"] after each episode
+                    if Qsa is a function fnc accepting one argument Qsa, then fnc(self.Qsa) is added to the list
+        :param policy: optional, default is False
+                       if True, self.policy.prob is added to list self.monitor["policy"] after each episode
+                       if policy is a function fnc accepting one argument prob,
+                       then fnc(self.policy.prob) is added to the list
+        :param check: optional, default is False
+                      check can be a function fnc accepting one argument strategy
+                      in this case the output of fnc(self) is added to list self.monitor["check"]
+                      after each episode
+        """
         self._monitor = dict()
         self.monitor = dict()
         if Vs:
@@ -1172,10 +1007,14 @@ class LearningStrategy(NaiveStrategy, ABC):
         and the episode number
         :param episode_id: episode number (positive integer)
         """
-        self.__epsilon = self.epsilon_min + self.__depsilon * \
+        self._epsilon = self.epsilon_min + self._depsilon * \
                          np.exp(-self.decay_rate * episode_id)
 
     def _update_monitor(self):
+        """
+        Updates the required monitoring after each episode
+        See method set_monitor
+        """
         if self._monitor:
             for arg, fnc in self._monitor.items():
                 self.monitor[arg].append(fnc(self))
@@ -1183,17 +1022,17 @@ class LearningStrategy(NaiveStrategy, ABC):
     @abstractmethod
     def _evaluate(self, percept):
         """
-        Evaluation step
+        Performs the evaluation step
         :param percept: Percept object
         """
         pass
 
     def _improve(self):
         """
-        Improvement step
+        Performs the improvement step
+        Calls the improve method of the Policy object in self.policy
         """
-        # :param percept: Percept object
-        self.policy.improve(self.Qsa, self.__epsilon)
+        self.policy.improve(self.Qsa, self._epsilon)
 
 
 class QLearning(LearningStrategy):
@@ -1206,6 +1045,7 @@ class QLearning(LearningStrategy):
                  gamma=1.0, epsilon_min=0.01, epsilon_max=1.0):
         """
         Creates a QLearning object
+        Input arguments are stored in attributes with the same name
         :param num_of_episodes: number of episodes (positive integer)
         :param policy: Policy object with initial policy
         :param learning_rate: learning rate
@@ -1218,41 +1058,18 @@ class QLearning(LearningStrategy):
         """
         super().__init__(num_of_episodes, policy, decay_rate, gamma, epsilon_min, epsilon_max)
         self.learning_rate = learning_rate
-        self._1_alpha = 1 - learning_rate
-
-    # def learn(self, percept, episode_id):
-    #     """
-    #     Updates the empirical MDP and the value functions Q and V by iteratively
-    #     applying an evaluation and an improvement step
-    #     This method is called by the agent after each learning step
-    #     (see MarkovDecisionProcess)
-    #     The result is found in attributes self.Qsa and self.Vs
-    #     :param percept: Percept object
-    #     :param episode_id: episode number (positive integer)
-    #     """
-    #     super().learn(percept, episode_id)
-    #     self.Vs[percept.state] = np.max(self.Qsa[percept.state, :])
+        self._1_alpha = 1 - learning_rate  # 1 - alpha
 
     def _evaluate(self, percept):
         """
-        Performs the Q-Learning evaluation step in which the action-value function Q is calculated
-        from the new percept
+        Performs the Q-Learning evaluation step
+        calculating the action-value function Q using the new percept
         :param percept: Percept object
         """
         sa = percept.get_sa_indices()
         self.Qsa[sa] = self._1_alpha * self.Qsa[sa] + self.learning_rate * \
                        (percept.reward + self.gamma * np.max(self.Qsa[percept.next_state, :]))
         self.Vs[sa[0]] = np.max(self.Qsa[sa[0], :])
-
-    # def _improve(self, percept):
-    #     """
-    #     Performs the Q-Learning improvement step in which the policy is improved every learning step
-    #     applying a epsilon-greedy method
-    #     :param percept: Percept object
-    #     """
-    #     #for s in range(self.mdp.nstates):
-    #     #    self._improve_policy(s)
-    #     self._improve_policy(percept.state)
 
 
 class MonteCarlo(QLearning):
@@ -1265,6 +1082,7 @@ class MonteCarlo(QLearning):
                  gamma=1.0, epsilon_min=0.01, epsilon_max=1.0):
         """
         Creates a MonteCaro object
+        Input arguments are stored in attributes with the same name
         :param num_of_episodes: number of episodes (positive integer)
         :param policy: Policy object with initial policy
         :param learning_rate: learning rate
@@ -1277,21 +1095,36 @@ class MonteCarlo(QLearning):
         """
         super().__init__(num_of_episodes, policy, learning_rate, decay_rate,
                          gamma, epsilon_min, epsilon_max)
-        self._percepts = []
+        self._percepts = []  # list with percepts
 
     def _initialize(self, percept):
+        """
+        Initializes a new learning step by adding the new percept to self._percepts
+        and setting self._condition to percept.done
+        Called by method learn
+        :param percept: Percept object
+        """
         self._percepts.insert(0, percept)
         self._condition = percept.done
 
     def learn(self, percept, episode_id):
+        """
+        Updates the empirical MDP and the value functions by iteratively
+        applying an evaluation and an improvement step
+        This method is called by the agent after each learning step
+        (see MarkovDecisionProcess)
+        The result is found in attributes self.Qsa and self.Vs
+        :param percept: Percept object
+        :param episode_id: episode number (positive integer)
+        """
         self._initialize(percept)
         super().learn(percept, episode_id)
         self._reset()
 
     def _evaluate(self, percept):
         """
-        Performs the Monte Carlo evaluation step in which the action-value function Q is calculated
-        from the new percepts sampled during an episode
+        Performs the Monte Carlo evaluation step
+        calculating the action-value function Q using the new percepts sampled during an episode
         :param percept: Percept object
         """
         for percept in self._percepts:
@@ -1299,6 +1132,8 @@ class MonteCarlo(QLearning):
 
     def _reset(self):
         """
+        Sets self._percepts to an empty list if the current episode is terminated
+        Called by method learn
         """
         if self._condition:
             self._percepts = []
@@ -1314,6 +1149,7 @@ class NStepQLearning(MonteCarlo):
                  gamma=1.0, epsilon_min=0.01, epsilon_max=1.0):
         """
         Creates a MonteCaro object
+        Input arguments are stored in attributes with the same name
         :param num_of_episodes: number of episodes (positive integer)
         :param policy: Policy object with initial policy
         :param learning_rate: learning rate
@@ -1328,15 +1164,23 @@ class NStepQLearning(MonteCarlo):
         super().__init__(num_of_episodes, policy, learning_rate, decay_rate,
                          gamma, epsilon_min, epsilon_max)
         self.Nstep = Nstep
-        self._N = 0
+        self._N = 0  # step counter
 
     def _initialize(self, percept):
+        """
+        Initializes a new learning step by adding the new percept to self._percepts,
+        augmenting step counter self._N by 1, and setting self._condition to self.N == self.Nstep
+        Called by method learn
+        :param percept: Percept object
+        """
         self._percepts.insert(0, percept)
         self._N += 1
         self._condition = self._N == self.Nstep
 
     def _reset(self):
         """
+        Sets self._percepts to an empty list and self._N to 0 if each Nstep steps
+        Called by method learn
         """
         if self._condition:
             self._percepts = []
@@ -1353,6 +1197,7 @@ class ValueIteration(LearningStrategy):
                  precision=1e-3, maxiter=1000, gamma=1.0, epsilon_min=0.01, epsilon_max=1.0):
         """
         Creates a ValueIteration object
+        Input arguments are stored in attributes with the same name
         :param num_of_episodes: number of episodes (positive integer)
         :param policy: Policy object with initial policy
         :param decay_rate: decay rate
@@ -1368,15 +1213,16 @@ class ValueIteration(LearningStrategy):
         super().__init__(num_of_episodes, policy, decay_rate, gamma, epsilon_min, epsilon_max)
         self.precision = precision
         self.maxiter = maxiter
-        self._precision = precision
-        self._iter = 0
+        self._iter = 0  # iteration number
+        self._precision = precision  # precision corrected by gamma
         if self.gamma < 1:
             self._precision *= 1/self.gamma - 1
 
     def _evaluate(self, percept):
         """
-        Performs the Value Iteration evaluation step in which the state-value function V is calculated
-        from the new percept
+        Performs the Value Iteration evaluation step
+        calculating the state-value function V using the new percept
+        and by applying an iterative dynamic programming algorithm
         :param percept: Percept object
         """
 
