@@ -362,11 +362,6 @@ class Agent:
                               update=update_plot)
                 update_plot = True
 
-        #self.strategy.policy = self.strategy.mdp.policy_improvement(self.strategy.Vs)
-        #if plot_frequency:
-        #    self.env.plot(self.strategy.policy, self.strategy.Vs.copy(),
-        #                  title="Optimal policy", update=update_plot)
-
 
 class Percept:
     """
@@ -550,7 +545,7 @@ class MarkovDecisionProcess:
     and value iteration to solve the MDP
     """
 
-    def __init__(self, states, actions, Psas, Rsas, gamma=1.0, outer=100, inner=0):
+    def __init__(self, states, actions, Psas, Rsas, gamma=1.0, inner=0, outer=100):
         """
         Creates a MarkovDecisionProcess object
         :param states: list or array with the states
@@ -562,11 +557,11 @@ class MarkovDecisionProcess:
         :param Rsas: reward matrix
                      numpy array with nstates x nactions x nstates rewards
         :param gamma: discount factor, default is 1.0
-        :param outer: default number of outer iterations, optional, default is 100
-                      used in policy iteration and value iteration
         :param inner: default number of inner iterations, optional, default is 0
                       used in policy evaluation
                       if inner = 0, the system of equations is solved directly
+        :param outer: default number of outer iterations, optional, default is 100
+                      used in policy iteration and value iteration
         All input arguments are assigned to attributes with the same name
         The same is true for nstates and nactions
         """
@@ -577,8 +572,8 @@ class MarkovDecisionProcess:
         self.Psas = Psas
         self.Rsas = Rsas
         self.gamma = gamma
-        self.outer = outer
         self.inner = inner
+        self.outer = outer
 
     def policy_evaluation(self, policy, inner=None):
         """
@@ -752,15 +747,19 @@ class GymMDP(MarkovDecisionProcess):
     Inherits from MarkovDecisionProcess
     """
 
-    def __init__(self, env, gamma=1.0, outer=100, inner=0):
+    def __init__(self, env, gamma=1.0, inner=0, outer=100):
         """
         Creates a GymMDP object
         Derives MDP attributes states, actions, Psas and Rsas
         from the given OpenAI Gym environment
         :param env: GymEnvironment object
-        :param gamma: discount factor, optional, default is 1.0
-        :param outer: number of outer iterations, optional, default is 100
-        :param inner: number of inner iterations, optional, default is 0
+        :param gamma: discount factor, default is 1.0
+        :param inner: default number of inner iterations, optional, default is 0
+                      used in policy evaluation
+                      if inner = 0, the system of equations is solved directly
+        :param outer: default number of outer iterations, optional, default is 100
+                      used in policy iteration and value iteration
+        All input arguments are assigned to attributes with the same name
         """
 
         # input: gym environment
@@ -803,7 +802,7 @@ class GymMDP(MarkovDecisionProcess):
                         Rsas[state, action, to] += r
 
         # call constructor of superclass
-        super().__init__(states, actions, Psas, Rsas, gamma, outer, inner)
+        super().__init__(states, actions, Psas, Rsas, gamma, inner, outer)
 
 
 class EmpiricalMDP(MarkovDecisionProcess):
@@ -812,14 +811,18 @@ class EmpiricalMDP(MarkovDecisionProcess):
     Inherits from class MarkovDecisionProcess
     """
 
-    def __init__(self, nstates, nactions, gamma=1.0, outer=100, inner=0):
+    def __init__(self, nstates, nactions, gamma=1.0, inner=0, outer=100):
         """
         Creates an EmpiricalMDP object
         :param nstates: number of states (positive integer)
         :param nactions: number of actions (positive integer)
-        :param gamma: discount factor, optional, default is 1.0
-        :param outer: number of outer iterations, optional, default is 100 (see MarkovDecisionProcess)
-        :param inner: number of inner iterations, optional, default is 0 (see MarkovDecisionProcess)
+        :param gamma: discount factor, default is 1.0
+        :param inner: default number of inner iterations, optional, default is 0
+                      used in policy evaluation
+                      if inner = 0, the system of equations is solved directly
+        :param outer: default number of outer iterations, optional, default is 100
+                      used in policy iteration and value iteration
+        All input arguments are assigned to attributes with the same name
         """
 
         # states and actions
@@ -831,7 +834,7 @@ class EmpiricalMDP(MarkovDecisionProcess):
         Rsas = np.zeros((nstates, nactions, nstates))
 
         # call superclass constructor
-        super().__init__(states, actions, Psas, Rsas, gamma, outer, inner)
+        super().__init__(states, actions, Psas, Rsas, gamma, inner, outer)
 
         # allocate frequency matrices
         self.Nsas = np.zeros((nstates, nactions, nstates), dtype=np.int_)
@@ -1001,24 +1004,6 @@ class LearningStrategy(NaiveStrategy, ABC):
             self._update_epsilon(episode_id)
             self._update_monitor()
 
-    def _update_epsilon(self, episode_id):
-        """
-        Updates epsilon after each episode using the decay rate, the given epsilon range,
-        and the episode number
-        :param episode_id: episode number (positive integer)
-        """
-        self._epsilon = self.epsilon_min + self._depsilon * \
-                         np.exp(-self.decay_rate * episode_id)
-
-    def _update_monitor(self):
-        """
-        Updates the required monitoring after each episode
-        See method set_monitor
-        """
-        if self._monitor:
-            for arg, fnc in self._monitor.items():
-                self.monitor[arg].append(fnc(self))
-
     @abstractmethod
     def _evaluate(self, percept):
         """
@@ -1033,6 +1018,24 @@ class LearningStrategy(NaiveStrategy, ABC):
         Calls the improve method of the Policy object in self.policy
         """
         self.policy.improve(self.Qsa, self._epsilon)
+
+    def _update_epsilon(self, episode_id):
+        """
+        Updates epsilon after each episode using the decay rate, the given epsilon range,
+        and the episode number
+        :param episode_id: episode number (positive integer)
+        """
+        self._epsilon = self.epsilon_min + self._depsilon * \
+                        np.exp(-self.decay_rate * episode_id)
+
+    def _update_monitor(self):
+        """
+        Updates the required monitoring after each episode
+        See method set_monitor
+        """
+        if self._monitor:
+            for arg, fnc in self._monitor.items():
+                self.monitor[arg].append(fnc(self))
 
 
 class QLearning(LearningStrategy):
@@ -1097,16 +1100,6 @@ class MonteCarlo(QLearning):
                          gamma, epsilon_min, epsilon_max)
         self._percepts = []  # list with percepts
 
-    def _initialize(self, percept):
-        """
-        Initializes a new learning step by adding the new percept to self._percepts
-        and setting self._condition to percept.done
-        Called by method learn
-        :param percept: Percept object
-        """
-        self._percepts.insert(0, percept)
-        self._condition = percept.done
-
     def learn(self, percept, episode_id):
         """
         Updates the empirical MDP and the value functions by iteratively
@@ -1129,6 +1122,16 @@ class MonteCarlo(QLearning):
         """
         for percept in self._percepts:
             super()._evaluate(percept)
+
+    def _initialize(self, percept):
+        """
+        Initializes a new learning step by adding the new percept to self._percepts
+        and setting self._condition to percept.done
+        Called by method learn
+        :param percept: Percept object
+        """
+        self._percepts.insert(0, percept)
+        self._condition = percept.done
 
     def _reset(self):
         """
