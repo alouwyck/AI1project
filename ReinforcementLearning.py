@@ -254,10 +254,10 @@ class FrozenLake(GymEnvironment):
         return np.array(wins).sum()
 
 
-class Taxi(GymEnvironment):
+class Taxi(FrozenLake):
     """
     Wrapper class for the OpenAI Gym Taxi-v3 environment
-    Inherits from class GymEnvironment
+    Inherits from class FrozenLake
     """
 
     def __init__(self, gym_env):
@@ -301,13 +301,6 @@ class Taxi(GymEnvironment):
         _, _, self._pickup, _ = self.decode(state)
         return state
 
-    def render(self):
-        """
-        Renders the Taxi environment
-        Calls self.gym_env.render()
-        """
-        self.gym_env.render()
-
     def encode(self, row, column, passenger, destination):
         """
         Converts taxi position (row, column), passenger location, and destination into state id
@@ -335,7 +328,7 @@ class Taxi(GymEnvironment):
         row, column, passenger, destination = self.gym_env.decode(state)
         return row, column, passenger, destination
 
-    def plot(self, update=False, title=None):
+    def plot(self, update=False, title=None, *args):
         """
         Plots the Taxi environment showing the current state returned by method self.state()
         :param update: if True, an existing plot of the environment is updated,
@@ -415,7 +408,7 @@ class Taxi(GymEnvironment):
         fig.canvas.draw()
 
     @staticmethod
-    def make(time_limit=True):
+    def make(time_limit=True, *args):
         """
         Static method to create a Taxi object wrapping the OpenAI Gym Taxi-v3 environment
         :param time_limit: If False, the number of actions (steps) are not limited
