@@ -109,7 +109,7 @@ class GymEnvironment(Environment):
 
 class FrozenLake(GymEnvironment):
     """
-    Wrapper class for the OpenAI Gym FrozenLake-v0 enviroment
+    Wrapper class for the OpenAI Gym FrozenLake-v0 environment
     Inherits from class GymEnvironment
     """
 
@@ -119,7 +119,11 @@ class FrozenLake(GymEnvironment):
         :param gym_env: the original OpenAI Gym FrozenLake-v0 object
         The original environment is stored in self.gym_env
         """
+
+        # call superclass constructor
         super().__init__(gym_env)
+
+        # the Frozen Lake 4x4 grid showing the start (1), the goal (2), and the holes (-1)
         self._grid = np.array([[1, 0, 0, 0],
                                [0, -1, 0, -1],
                                [0, 0, 0, -1],
@@ -234,12 +238,15 @@ class FrozenLake(GymEnvironment):
         # get original FrozenLakeEnv object
         if not time_limit:
             gym_env = gym_env.env
+
+        # create and return FrozenLake wrapper object
         return FrozenLake(gym_env)
 
     @staticmethod
     def num_of_wins(episodes):
         """
         Static method that counts the number of wins in a given list of episodes (plays)
+        An episode is a win if it terminates in state 15
         :param episodes: list of Episode objects
         :return: number of wins (integer)
         """
@@ -248,17 +255,29 @@ class FrozenLake(GymEnvironment):
 
 
 class Taxi(GymEnvironment):
+    """
+    Wrapper class for the OpenAI Gym Taxi-v3 environment
+    Inherits from class GymEnvironment
+    """
 
     def __init__(self, gym_env):
+        """
+        Creates a wrapper class for the OpenAI Gym Taxi-v3 environment
+        :param gym_env: the original OpenAI Gym Taxi-v3 object
+        The original environment is stored in self.gym_env
+        """
 
+        # call superclass constructor
         super().__init__(gym_env)
 
+        # the Taxi grid showing the 4 pick-up and drop-off locations
         self._grid = np.array([[1, 0, 0, 0, 2],
                                [0, 0, 0, 0, 0],
                                [0, 0, 0, 0, 0],
                                [0, 0, 0, 0, 0],
                                [3, 0, 0, 4, 0]])
 
+        # position of the walls
         self._wall = np.zeros((5, 4), dtype=np.bool_)
         self._wall[0, 1] = True
         self._wall[1, 1] = True
@@ -267,25 +286,62 @@ class Taxi(GymEnvironment):
         self._wall[4, 0] = True
         self._wall[4, 2] = True
 
+        # the pickup location
         self._pickup = None
 
     def reset(self):
+        """
+        Resets the Taxi environment
+        Calls self.gym_env.reset()
+        Sets the pick-up location, i.e. location where passenger waits
+        (see attribute self._pickup)
+        :return: the state to which the environment is reset
+        """
         state = super().reset()
         _, _, self._pickup, _ = self.decode(state)
         return state
 
     def render(self):
+        """
+        Renders the Taxi environment
+        Calls self.gym_env.render()
+        """
         self.gym_env.render()
 
     def encode(self, row, column, passenger, destination):
+        """
+        Converts taxi position (row, column), passenger location, and destination into state id
+        Calls self.gym_env.encode()
+        :param row: row of taxi position: 0, 1, ..., 4
+        :param column: column of taxi position: 0, 1, ..., 4
+        :param passenger: pick-up location: 0, 1, ... 4
+        :param destination: drop-off location: 0, 1, ..., 3
+        :return: state id
+        """
         state = self.gym_env.encode(row, column, passenger, destination)
         return state
 
     def decode(self, state):
+        """
+        Converts state id into taxi position (row, column), passenger location, and destination
+        Calls self.gym_env.decode()
+        :param state: state id
+        :return: row, column, passenger, destination
+                 row: row of taxi position: 0, 1, ..., 4
+                 column: column of taxi position: 0, 1, ..., 4
+                 passenger: pick-up location: 0, 1, ... 4
+                 destination: drop-off location: 0, 1, ..., 3
+        """
         row, column, passenger, destination = self.gym_env.decode(state)
         return row, column, passenger, destination
 
     def plot(self, update=False, title=None):
+        """
+        Plots the Taxi environment showing the current state returned by method self.state()
+        :param update: if True, an existing plot of the environment is updated,
+                       default is False, in which case a new plot is created
+        :param title: plot title (string), optional
+        """
 
         # update existing figure
         if update:
@@ -360,18 +416,42 @@ class Taxi(GymEnvironment):
 
     @staticmethod
     def make(time_limit=True):
+        """
+        Static method to create a Taxi object wrapping the OpenAI Gym Taxi-v3 environment
+        :param time_limit: If False, the number of actions (steps) are not limited
+                           if True (default), the number of actions is limited
+        :return: Taxi object wrapping the OpenAI Gym Taxi-v3 object
+        """
+
+        # create TimeLimit object
         gym_env = gym.make("Taxi-v3")
+
+        # get original Taxi object
         if not time_limit:
             gym_env = gym_env.env
+
+        # create and return Taxi wrapper object
         return Taxi(gym_env)
 
     @staticmethod
     def num_of_wins(episodes):
+        """
+        Static method that counts the number of wins in a given list of episodes (plays)
+        An episode is a win if the final reward is 20
+        :param episodes: list of Episode objects
+        :return: number of wins (integer)
+        """
         wins = [episode.percepts[episode.n - 1, 2] == 20 for episode in episodes]
         return np.array(wins).sum()
 
     @staticmethod
     def average_return(episodes):
+        """
+        Static methods that calculates the mean return of a list of episodes (plays)
+        The return of an episode is defined here as its total undiscounted reward
+        :param episodes: list of Episode objects
+        :return: mean return of the episodes
+        """
         total_reward = [episode.percepts[:, 2].sum() for episode in episodes]
         return np.array(total_reward).mean()
 
