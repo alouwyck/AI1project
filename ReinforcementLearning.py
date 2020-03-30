@@ -59,7 +59,7 @@ class GymEnvironment(Environment):
         :param gym_env: the original OpenAI Gym object
         The original environment is stored in self.gym_env
         """
-        super().__init__(gym_env.nS, gym_env.nA)
+        super().__init__(gym_env.observation_space.n, gym_env.action_space.n)
         self.gym_env = gym_env
 
     def state(self):
@@ -245,6 +245,135 @@ class FrozenLake(GymEnvironment):
         """
         wins = [episode.percepts[episode.n-1, 3] == 15 for episode in episodes]
         return np.array(wins).sum()
+
+
+class Taxi(GymEnvironment):
+
+    def __init__(self, gym_env):
+
+        super().__init__(gym_env)
+
+        self._grid = np.array([[1, 0, 0, 0, 2],
+                               [0, 0, 0, 0, 0],
+                               [0, 0, 0, 0, 0],
+                               [0, 0, 0, 0, 0],
+                               [3, 0, 0, 4, 0]])
+
+        self._wall = np.zeros((5, 4), dtype=np.bool_)
+        self._wall[0, 1] = True
+        self._wall[1, 1] = True
+        self._wall[3, 0] = True
+        self._wall[3, 2] = True
+        self._wall[4, 0] = True
+        self._wall[4, 2] = True
+
+        self._pickup = None
+
+    def reset(self):
+        state = super().reset()
+        _, _, self._pickup, _ = self.decode(state)
+        return state
+
+    def render(self):
+        self.gym_env.render()
+
+    def encode(self, row, column, passenger, destination):
+        state = self.gym_env.encode(row, column, passenger, destination)
+        return state
+
+    def decode(self, state):
+        row, column, passenger, destination = self.gym_env.decode(state)
+        return row, column, passenger, destination
+
+    def plot(self, update=False, title=None):
+
+        # update existing figure
+        if update:
+            fig = plt.gcf()
+            ax = fig.axes[0]
+            ax.clear()
+        # create new figure
+        else:
+            fig = plt.figure()
+            ax = plt.axes()
+
+        # color grid cells
+        cmap = colors.ListedColormap(['white', 'lightcoral', 'lightgreen', 'lightyellow', 'lightblue'])
+        bounds = np.linspace(-0.5, 4.5, 6)
+        norm = colors.BoundaryNorm(bounds, cmap.N)
+        ax.matshow(self._grid, cmap=cmap, norm=norm)
+
+        # plot walls
+        x = np.linspace(0.5, 3.5, 4)
+        y = np.linspace(-0.5, 3.5, 5)
+        x = np.repeat(x[np.newaxis, :], 5, 0)
+        y = np.repeat(y[:, np.newaxis], 4, 1)
+        x = x[self._wall]
+        y = y[self._wall]
+        x = np.repeat(x[np.newaxis, :], 2, 0)
+        y = np.vstack((y, y+1))
+        ax.plot(x, y, 'k', ls="-", lw=5)
+
+        # set axes properties: aspect ratio, ticks ans labels
+        ax.set_aspect("equal")
+        ax.set_xticks(np.linspace(-0.5, 4.5, 6))
+        ax.set_xticklabels([])
+        ax.set_yticks(np.linspace(-0.5, 4.5, 6))
+        ax.set_yticklabels([])
+        ax.tick_params(axis=u'both', which=u'both', length=0)
+
+        # plot grid and set axis limits
+        plt.grid()
+        plt.xlim([-0.5, 4.5])
+        plt.ylim([4.5, -0.5])
+
+        # getting the state
+        row, column, passenger, destination = self.decode(self.state())
+
+        # plotting the taxi
+        ij = (row, column)
+        if passenger == 4:
+            facecolor = "black"
+        else:
+            facecolor = "white"
+        ax.add_patch(Rectangle(np.array(ij)[::-1] - 0.25, 0.5, 0.5,
+                               edgecolor='black', facecolor=facecolor,
+                               linestyle="-", linewidth=3.0))
+
+        # plotting pick-up and destination
+        x = np.repeat(np.arange(5)[np.newaxis, :], 5, 0)
+        y = np.repeat(np.arange(5)[:, np.newaxis], 5, 1)
+        b = self._grid > 0.0
+        x = x[b] + 0.25
+        y = y[b] - 0.25
+        ax.text(x[self._pickup], y[self._pickup], 'P')
+        ax.text(x[destination], y[destination], 'D')
+
+        # title is given
+        if title is not None:
+            fig.suptitle(title)
+
+        # show the plot
+        if not update:
+            fig.show()
+        fig.canvas.draw()
+
+    @staticmethod
+    def make(time_limit=True):
+        gym_env = gym.make("Taxi-v3")
+        if not time_limit:
+            gym_env = gym_env.env
+        return Taxi(gym_env)
+
+    @staticmethod
+    def num_of_wins(episodes):
+        wins = [episode.percepts[episode.n - 1, 2] == 20 for episode in episodes]
+        return np.array(wins).sum()
+
+    @staticmethod
+    def average_return(episodes):
+        total_reward = [episode.percepts[:, 2].sum() for episode in episodes]
+        return np.array(total_reward).mean()
 
 
 class Agent:
